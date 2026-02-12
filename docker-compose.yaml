@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - META_ACCESS_TOKEN=${META_ACCESS_TOKEN}
+      - META_AD_ACCOUNT_ID=${META_AD_ACCOUNT_ID}
+    volumes:
+      - .:/app
+    restart: always
+
+  # Para el frontend, podrías usar un servicio de Nginx o similar,
+  # pero para desarrollo, la API sirve los datos y el frontend corre local.
