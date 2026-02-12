@@ -16,8 +16,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Puerto donde corre FastAPI
-EXPOSE 8000
+# Puerto donde corre FastAPI (por defecto 8000, pero configurable)
+ENV PORT=8000
+EXPOSE $PORT
 
 # Usamos uvicorn para manejar las peticiones asíncronas
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers"]

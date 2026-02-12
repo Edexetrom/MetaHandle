@@ -14,7 +14,7 @@ services:
     image: nginx:alpine
     container_name: meta_frontend_ui
     ports:
-      - "3000:80" # Cambiado de 80:80 a 3000:80 para evitar el error de puerto ocupado
+      - "3000:80" # Frontend accesible en el puerto 3000 del host
     volumes:
       - ./index.html:/usr/share/nginx/html/index.html
       - ./App.jsx:/usr/share/nginx/html/App.jsx
