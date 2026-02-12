@@ -19,7 +19,7 @@ services:
     image: nginx:alpine
     container_name: meta_frontend_ui
     ports:
-      - "80:80"
+      - "81:81"
     volumes:
       - ./index.html:/usr/share/nginx/html/index.html
       # - ./App.jsx:/usr/share/nginx/html/App.jsx # Si se carga externamente
