@@ -3,14 +3,18 @@ version: '3.8'
 services:
   api:
     build: .
+    container_name: meta_ads_api
     ports:
       - "8000:8000"
-    environment:
-      - META_ACCESS_TOKEN=${META_ACCESS_TOKEN}
-      - META_AD_ACCOUNT_ID=${META_AD_ACCOUNT_ID}
+    env_file:
+      - .env
+    restart: always
+    # Esto asegura que los cambios en el código se reflejen si montas el volumen
     volumes:
       - .:/app
-    restart: always
+    networks:
+      - ads_network
 
-  # Para el frontend, podrías usar un servicio de Nginx o similar,
-  # pero para desarrollo, la API sirve los datos y el frontend corre local.
+networks:
+  ads_network:
+    driver: bridge

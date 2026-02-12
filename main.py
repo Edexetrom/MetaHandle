@@ -9,19 +9,25 @@ from datetime import datetime
 
 app = FastAPI(title="Meta Ads Control Center")
 
-# Configuración de CORS para la interfaz
+# Configuración de CORS para producción
+# Añadimos tu dominio específico para permitir las peticiones desde el navegador
+origins = [
+    "http://localhost:3000",
+    "http://manejometa.libresdeumas.com",
+    "https://manejometa.libresdeumas.com",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --- CONFIGURACIÓN DE META ---
-# Estos valores deberían venir de variables de entorno en producción
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "YOUR_TOKEN_HERE")
 AD_ACCOUNT_ID = os.getenv("META_AD_ACCOUNT_ID", "act_YOUR_ACCOUNT_ID")
-API_VERSION = "v19.0"
+API_VERSION = "v24.0"
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 
 # --- MODELOS DE DATOS ---
@@ -61,14 +67,11 @@ async def update_meta_status(ad_id: str, status: str):
 async def get_dashboard_data():
     """
     Obtiene anuncios con presupuesto, gasto y resultados.
-    Filtramos por AdSets para manejar 'grupos' de anuncios.
     """
-    # 1. Obtener AdSets (Grupos)
     ad_sets_data = await fetch_from_meta(f"{AD_ACCOUNT_ID}/adsets", params={
         "fields": "name,status,daily_budget,lifetime_budget,insights{spend,actions}"
     })
     
-    # 2. Obtener Ads individuales
     ads_data = await fetch_from_meta(f"{AD_ACCOUNT_ID}/ads", params={
         "fields": "name,status,adset_id,insights{spend,actions}"
     })
@@ -94,9 +97,7 @@ async def toggle_status(update: AdStatusUpdate):
 async def schedule_action(action: ScheduleAction, background_tasks: BackgroundTasks):
     """
     Programa una acción de encendido/apagado.
-    En una versión pro, usaríamos Celery o Redis, pero aquí usamos BackgroundTasks.
     """
-    # Lógica de scheduling simplificada
     target_time = datetime.fromisoformat(action.execution_time)
     delay = (target_time - datetime.now()).total_seconds()
     
