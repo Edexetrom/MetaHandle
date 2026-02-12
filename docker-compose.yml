@@ -1,15 +1,12 @@
-version: '3.8'
-
 services:
   api:
     build: .
-    container_name: meta_ads_api
+    container_name: meta_ads_api_prod
     ports:
       - "8000:8000"
     env_file:
       - .env
     restart: always
-    # Esto asegura que los cambios en el código se reflejen si montas el volumen
     volumes:
       - .:/app
     networks:
