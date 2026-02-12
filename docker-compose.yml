@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  # SERVICIO DE BACKEND (manejoapi.libresdeumas.com)
+  # BACKEND: manejoapi.libresdeumas.com (Puerto 8000)
   backend:
     build: .
     container_name: meta_backend_api
@@ -10,23 +8,14 @@ services:
     env_file:
       - .env
     restart: always
-    networks:
-      - ads_network
 
-  # SERVICIO DE FRONTEND (manejometa.libresdeumas.com)
-  # Usamos un servidor ligero de archivos estáticos
+  # FRONTEND: manejometa.libresdeumas.com (Puerto 3000)
   frontend:
     image: nginx:alpine
     container_name: meta_frontend_ui
     ports:
-      - "81:81"
+      - "3000:80" # Cambiado de 80:80 a 3000:80 para evitar el error de puerto ocupado
     volumes:
       - ./index.html:/usr/share/nginx/html/index.html
-      # - ./App.jsx:/usr/share/nginx/html/App.jsx # Si se carga externamente
+      - ./App.jsx:/usr/share/nginx/html/App.jsx
     restart: always
-    networks:
-      - ads_network
-
-networks:
-  ads_network:
-    driver: bridge
