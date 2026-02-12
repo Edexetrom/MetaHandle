@@ -10,10 +10,10 @@ from datetime import datetime
 app = FastAPI(
     title="Meta Ads Control Center",
     description="API para el control de encendido/apagado de anuncios de Meta",
-    version="1.1.0"
+    version="1.1.1"
 )
 
-# Configuración de CORS para tu dominio en Hostinger
+# Configuración de CORS
 origins = [
     "http://localhost:3000",
     "http://manejometa.libresdeumas.com",
@@ -36,22 +36,12 @@ BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 # --- MODELOS DE DATOS ---
 class AdStatusUpdate(BaseModel):
     ad_ids: List[str]
-    status: str  # 'ACTIVE' o 'PAUSED'
+    status: str 
 
 class ScheduleAction(BaseModel):
     ad_ids: List[str]
     status: str
-    execution_time: str # Formato ISO: "2024-05-20T15:30:00"
-
-# --- UTILIDADES ---
-async def update_meta_status_task(ad_id: str, status: str):
-    """Función auxiliar para peticiones POST a Meta"""
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            f"{BASE_URL}/{ad_id}", 
-            params={"status": status, "access_token": ACCESS_TOKEN}
-        )
-        return res.status_code == 200
+    execution_time: str 
 
 # --- ENDPOINTS ---
 
@@ -59,18 +49,24 @@ async def update_meta_status_task(ad_id: str, status: str):
 async def root():
     return {
         "status": "online",
-        "domain": "manejometa.libresdeumas.com",
-        "endpoints": ["/docs", "/ads/dashboard"]
+        "creds_check": {
+            "token_present": len(ACCESS_TOKEN) > 0,
+            "account_id_present": len(AD_ACCOUNT_ID) > 0,
+            "account_id_format_ok": AD_ACCOUNT_ID.startswith("act_")
+        }
     }
 
 @app.get("/ads/dashboard")
 async def get_dashboard_data():
     if not ACCESS_TOKEN or not AD_ACCOUNT_ID:
-        raise HTTPException(status_code=400, detail="Credenciales faltantes en .env")
+        raise HTTPException(status_code=400, detail="Faltan credenciales en el .env")
     
+    if not AD_ACCOUNT_ID.startswith("act_"):
+        raise HTTPException(status_code=400, detail="El AD_ACCOUNT_ID debe empezar con 'act_'")
+
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            # Obtener AdSets (Grupos)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # 1. Obtener AdSets
             adsets_res = await client.get(
                 f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", 
                 params={
@@ -78,8 +74,13 @@ async def get_dashboard_data():
                     "access_token": ACCESS_TOKEN
                 }
             )
+            adsets_json = adsets_res.json()
             
-            # Obtener Ads (Anuncios individuales)
+            # Si Meta devuelve error, lo lanzamos
+            if "error" in adsets_json:
+                raise HTTPException(status_code=400, detail=f"Meta Error (AdSets): {adsets_json['error'].get('message')}")
+
+            # 2. Obtener Ads
             ads_res = await client.get(
                 f"{BASE_URL}/{AD_ACCOUNT_ID}/ads", 
                 params={
@@ -87,49 +88,33 @@ async def get_dashboard_data():
                     "access_token": ACCESS_TOKEN
                 }
             )
+            ads_json = ads_res.json()
+
+            if "error" in ads_json:
+                raise HTTPException(status_code=400, detail=f"Meta Error (Ads): {ads_json['error'].get('message')}")
 
             return {
-                "ad_sets": adsets_res.json().get("data", []),
-                "ads": ads_res.json().get("data", [])
+                "ad_sets": adsets_json.get("data", []),
+                "ads": ads_json.get("data", [])
             }
+            
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
 @app.post("/ads/toggle-status")
 async def toggle_status(update: AdStatusUpdate):
-    """Encendido/Apagado manual inmediato"""
     results = []
-    for ad_id in update.ad_ids:
-        success = await update_meta_status_task(ad_id, update.status)
-        results.append({"id": ad_id, "success": success})
+    async with httpx.AsyncClient() as client:
+        for ad_id in update.ad_ids:
+            res = await client.post(
+                f"{BASE_URL}/{ad_id}", 
+                params={"status": update.status, "access_token": ACCESS_TOKEN}
+            )
+            results.append({"id": ad_id, "success": res.status_code == 200, "meta_response": res.json()})
     
     return {"results": results, "new_status": update.status}
-
-@app.post("/ads/schedule")
-async def schedule_action(action: ScheduleAction, background_tasks: BackgroundTasks):
-    """Programar encendido/apagado para una fecha futura"""
-    try:
-        target_time = datetime.fromisoformat(action.execution_time)
-        now = datetime.now()
-        delay = (target_time - now).total_seconds()
-        
-        if delay < 0:
-            raise HTTPException(status_code=400, detail="La fecha de programación debe ser en el futuro")
-
-        async def delayed_execution():
-            await asyncio.sleep(delay)
-            for ad_id in action.ad_ids:
-                await update_meta_status_task(ad_id, action.status)
-
-        background_tasks.add_task(delayed_execution)
-        return {
-            "message": f"Acción programada exitosamente",
-            "execute_at": action.execution_time,
-            "status_target": action.status,
-            "items_count": len(action.ad_ids)
-        }
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use ISO 8601")
 
 if __name__ == "__main__":
     import uvicorn
