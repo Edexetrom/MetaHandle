@@ -12,7 +12,7 @@ app = FastAPI(title="Meta Ads Control Center")
 # Configuración de CORS para producción
 # Añadimos tu dominio específico para permitir las peticiones desde el navegador
 origins = [
-    "http://localhost:3000",
+    "http://localhost:8000",
     "http://manejometa.libresdeumas.com",
     "https://manejometa.libresdeumas.com",
 ]
