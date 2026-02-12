@@ -1,225 +1,188 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Power,
-    Clock,
-    RefreshCw,
-    Layers,
-    DollarSign,
-    TrendingUp,
-    CheckCircle2
+    Power, RefreshCw, Clock, Layers,
+    DollarSign, TrendingUp, CheckCircle2, AlertTriangle
 } from 'lucide-react';
 
-/**
- * Nota Senior: 
- * Este archivo representa la UI desacoplada. 
- * En produccion, este codigo se compila y se sirve como estatico.
- */
+// URL de la API separada
+const API_URL = "https://manejoapi.libresdeumas.com";
 
 const App = () => {
     const [data, setData] = useState({ ad_sets: [], ads: [] });
-    const [loading, setLoading] = useState(true);
-    const [selectedIds, setSelectedIds] = useState([]);
-    const [viewMode, setViewMode] = useState('adsets'); // 'adsets' o 'ads'
-    const [scheduleTime, setScheduleTime] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [selected, setSelected] = useState([]);
+    const [mode, setMode] = useState('adsets');
+    const [date, setDate] = useState('');
+    const [error, setError] = useState(null);
 
-    // Sincronizacion con el Backend de FastAPI
     const fetchData = async () => {
         setLoading(true);
+        setError(null);
         try {
-            const response = await fetch('/ads/dashboard');
-            const result = await response.json();
-            setData(result);
-        } catch (error) {
-            console.error("Error al obtener datos de Meta:", error);
+            const res = await fetch(`${API_URL}/ads/dashboard`);
+            if (!res.ok) throw new Error("Error en la respuesta de la API");
+            const json = await res.json();
+            setData(json);
+        } catch (err) {
+            setError("No se pudo conectar con la API. Verifica el dominio y CORS.");
         } finally {
             setLoading(false);
         }
     };
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    useEffect(() => { fetchData(); }, []);
 
-    // Control manual inmediato
-    const handleToggle = async (status) => {
-        if (selectedIds.length === 0) return;
+    const handleAction = async (status) => {
+        if (selected.length === 0) return;
+        setLoading(true);
         try {
-            const res = await fetch('/ads/toggle-status', {
+            await fetch(`${API_URL}/ads/toggle`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ad_ids: selectedIds, status })
+                body: JSON.stringify({ ad_ids: selected, status })
             });
-            if (res.ok) {
-                fetchData();
-                setSelectedIds([]);
-            }
-        } catch (e) {
-            console.error("Error en el cambio de estado:", e);
-        }
+            await fetchData();
+            setSelected([]);
+        } catch (err) { setError("Error al ejecutar acción."); }
     };
 
-    // Logica de programacion diferida
     const handleSchedule = async (status) => {
-        if (!scheduleTime || selectedIds.length === 0) return;
+        if (!date || selected.length === 0) return;
         try {
-            const res = await fetch('/ads/schedule', {
+            await fetch(`${API_URL}/ads/schedule`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ad_ids: selectedIds,
-                    status,
-                    execution_time: new Date(scheduleTime).toISOString()
-                })
+                body: JSON.stringify({ ad_ids: selected, status, execution_time: date })
             });
-            if (res.ok) alert("Programacion guardada en el servidor");
-        } catch (e) {
-            console.error("Error al programar:", e);
-        }
+            alert("Tarea programada en el servidor.");
+        } catch (err) { alert("Error al programar."); }
     };
 
-    const toggleSelection = (id) => {
-        setSelectedIds(prev =>
-            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-        );
-    };
+    const currentItems = mode === 'adsets' ? data.ad_sets : data.ads;
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-8 font-sans">
-            {/* Header de Control */}
-            <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10 bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-2xl">
-                <div>
-                    <h1 className="text-3xl font-black flex items-center gap-3 text-blue-500">
-                        <Layers /> META ADS PRO
-                    </h1>
-                    <p className="text-slate-400 text-sm font-mono mt-1">Status: Conectado a Graph API v19.0</p>
+        <div className="min-h-screen bg-[#050505] text-slate-200 font-sans p-4 md:p-8">
+            {/* Navbar Superior */}
+            <nav className="flex flex-col md:flex-row justify-between items-center bg-[#0a0a0a] border border-white/10 p-6 rounded-3xl mb-8 shadow-2xl">
+                <div className="flex items-center gap-4 mb-4 md:mb-0">
+                    <div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-900/40">
+                        <Layers className="text-white" size={24} />
+                    </div>
+                    <div>
+                        <h1 className="text-xl font-black tracking-tighter text-white uppercase">Meta Manager Control</h1>
+                        <p className="text-[10px] text-blue-500 font-mono">API: {API_URL}</p>
+                    </div>
                 </div>
 
-                <div className="flex flex-wrap gap-3">
+                <div className="flex gap-3">
                     <button
-                        onClick={() => handleToggle('ACTIVE')}
-                        disabled={selectedIds.length === 0}
-                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-20 px-6 py-2 rounded-xl font-bold transition-all shadow-lg shadow-emerald-900/20"
+                        onClick={() => handleAction('ACTIVE')}
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 px-5 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-30"
+                        disabled={selected.length === 0}
                     >
-                        <Power size={18} /> ENCENDER
+                        <Power size={16} /> ENCENDER
                     </button>
                     <button
-                        onClick={() => handleToggle('PAUSED')}
-                        disabled={selectedIds.length === 0}
-                        className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-20 px-6 py-2 rounded-xl font-bold transition-all shadow-lg shadow-rose-900/20"
+                        onClick={() => handleAction('PAUSED')}
+                        className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 px-5 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-30"
+                        disabled={selected.length === 0}
                     >
-                        <Power size={18} /> APAGAR
+                        <Power size={16} /> APAGAR
                     </button>
                     <button
                         onClick={fetchData}
-                        className="p-3 bg-slate-800 rounded-xl hover:bg-slate-700 transition-colors"
+                        className="p-2 bg-white/5 hover:bg-white/10 rounded-xl transition-colors border border-white/10"
                     >
-                        <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+                        <RefreshCw className={loading ? 'animate-spin' : ''} size={20} />
                     </button>
                 </div>
-            </header>
+            </nav>
 
-            {/* Seccion de Programacion */}
-            <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 mb-8 backdrop-blur-sm">
-                <h2 className="text-xs uppercase font-black text-slate-500 mb-4 flex items-center gap-2 tracking-tighter">
-                    <Clock size={14} /> Scheduler de Tareas (Selecciona items primero)
-                </h2>
-                <div className="flex flex-wrap gap-4 items-end">
-                    <div className="flex flex-col gap-2">
-                        <input
-                            type="datetime-local"
-                            className="bg-slate-950 border border-slate-700 rounded-lg p-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                            onChange={(e) => setScheduleTime(e.target.value)}
-                        />
-                    </div>
-                    <button
-                        onClick={() => handleSchedule('ACTIVE')}
-                        className="border border-blue-500/50 text-blue-400 px-4 py-2 rounded-lg hover:bg-blue-500/10 transition-all text-sm font-bold"
-                    >
-                        Programar On
-                    </button>
-                    <button
-                        onClick={() => handleSchedule('PAUSED')}
-                        className="border border-slate-700 text-slate-400 px-4 py-2 rounded-lg hover:bg-rose-500/10 hover:text-rose-400 transition-all text-sm font-bold"
-                    >
-                        Programar Off
-                    </button>
-                </div>
-            </div>
-
-            {/* Tabs de Navegacion */}
-            <div className="flex gap-4 mb-8">
-                <button
-                    onClick={() => setViewMode('adsets')}
-                    className={`px-8 py-2 rounded-full font-black text-sm transition-all ${viewMode === 'adsets' ? 'bg-blue-600 shadow-lg shadow-blue-900/40' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}
-                >
-                    GRUPOS (ADSETS)
-                </button>
-                <button
-                    onClick={() => setViewMode('ads')}
-                    className={`px-8 py-2 rounded-full font-black text-sm transition-all ${viewMode === 'ads' ? 'bg-blue-600 shadow-lg shadow-blue-900/40' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}
-                >
-                    ANUNCIOS (ADS)
-                </button>
-            </div>
-
-            {/* Grid de Contenido */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {(viewMode === 'adsets' ? data.ad_sets : data.ads).map((item) => (
-                    <div
-                        key={item.id}
-                        onClick={() => toggleSelection(item.id)}
-                        className={`relative p-6 rounded-2xl border transition-all cursor-pointer group hover:scale-[1.02] ${selectedIds.includes(item.id)
-                                ? 'border-blue-500 bg-blue-500/5 ring-1 ring-blue-500/30'
-                                : 'border-slate-800 bg-slate-900 hover:border-slate-600'
-                            }`}
-                    >
-                        <div className="flex justify-between items-start mb-6">
-                            <div className="max-w-[75%]">
-                                <h3 className="font-bold text-lg truncate group-hover:text-blue-400 transition-colors" title={item.name}>
-                                    {item.name}
-                                </h3>
-                                <p className="text-[10px] text-slate-500 font-mono mt-1 uppercase tracking-tighter">ID: {item.id}</p>
-                            </div>
-                            <span className={`px-2 py-1 rounded text-[10px] font-black tracking-widest ${item.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
-                                }`}>
-                                {item.status}
-                            </span>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/50">
-                                <p className="text-slate-500 text-[10px] uppercase font-black mb-1 flex items-center gap-1 italic">
-                                    <DollarSign size={10} /> Inversión
-                                </p>
-                                <p className="text-xl font-bold text-white">
-                                    ${item.insights?.data?.[0]?.spend || "0.00"}
-                                </p>
-                            </div>
-                            <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/50">
-                                <p className="text-slate-500 text-[10px] uppercase font-black mb-1 flex items-center gap-1 italic">
-                                    <TrendingUp size={10} /> Resultados
-                                </p>
-                                <p className="text-xl font-bold text-blue-400">
-                                    {item.insights?.data?.[0]?.actions?.[0]?.value || 0}
-                                </p>
-                            </div>
-                        </div>
-
-                        {selectedIds.includes(item.id) && (
-                            <div className="absolute -top-3 -right-3 bg-blue-500 text-white rounded-full p-1 shadow-xl animate-in zoom-in">
-                                <CheckCircle2 size={20} />
-                            </div>
-                        )}
-                    </div>
-                ))}
-            </div>
-
-            {loading && data.ads.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-20">
-                    <RefreshCw size={40} className="animate-spin text-blue-500 mb-4" />
-                    <p className="text-slate-500 animate-pulse font-bold uppercase text-xs tracking-widest">Sincronizando con Meta...</p>
+            {error && (
+                <div className="mb-6 bg-rose-500/10 border border-rose-500/30 p-4 rounded-2xl flex items-center gap-3 text-rose-400">
+                    <AlertTriangle size={20} />
+                    <p className="text-sm font-medium">{error}</p>
                 </div>
             )}
+
+            {/* Scheduler */}
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 mb-8">
+                <div className="lg:col-span-1 bg-[#0a0a0a] border border-white/10 p-6 rounded-3xl">
+                    <h2 className="text-[10px] font-black text-slate-500 uppercase mb-4 tracking-widest flex items-center gap-2">
+                        <Clock size={12} /> Programación Masiva
+                    </h2>
+                    <input
+                        type="datetime-local"
+                        className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm mb-4 outline-none focus:border-blue-500 transition-all"
+                        onChange={(e) => setDate(e.target.value)}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => handleSchedule('ACTIVE')} className="bg-white/5 hover:bg-blue-600/20 text-xs py-2 rounded-lg border border-white/10 font-bold transition-all uppercase">Encender</button>
+                        <button onClick={() => handleSchedule('PAUSED')} className="bg-white/5 hover:bg-rose-600/20 text-xs py-2 rounded-lg border border-white/10 font-bold transition-all uppercase">Apagar</button>
+                    </div>
+                </div>
+
+                {/* Listado */}
+                <div className="lg:col-span-3">
+                    <div className="flex gap-4 mb-6 bg-white/5 p-1 rounded-2xl inline-flex border border-white/5">
+                        <button
+                            onClick={() => setMode('adsets')}
+                            className={`px-8 py-2 rounded-xl text-xs font-black transition-all ${mode === 'adsets' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}
+                        >
+                            GRUPOS (ADSETS)
+                        </button>
+                        <button
+                            onClick={() => setMode('ads')}
+                            className={`px-8 py-2 rounded-xl text-xs font-black transition-all ${mode === 'ads' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}
+                        >
+                            ANUNCIOS (ADS)
+                        </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                        {currentItems.map((item) => (
+                            <div
+                                key={item.id}
+                                onClick={() => setSelected(prev => prev.includes(item.id) ? prev.filter(i => i !== item.id) : [...prev, item.id])}
+                                className={`group relative bg-[#0a0a0a] border p-6 rounded-3xl cursor-pointer transition-all ${selected.includes(item.id) ? 'border-blue-500 bg-blue-500/5 ring-1 ring-blue-500/20' : 'border-white/10 hover:border-white/30'
+                                    }`}
+                            >
+                                <div className="flex justify-between items-start mb-6">
+                                    <div className="max-w-[70%]">
+                                        <h3 className="font-bold text-sm truncate uppercase tracking-tighter" title={item.name}>{item.name}</h3>
+                                        <p className="text-[9px] text-slate-500 font-mono mt-1">ID: {item.id}</p>
+                                    </div>
+                                    <span className={`text-[9px] px-2 py-1 rounded-lg font-black ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                                        }`}>
+                                        {item.status}
+                                    </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="bg-black/40 p-3 rounded-2xl border border-white/5">
+                                        <p className="text-[8px] text-slate-600 uppercase font-black mb-1 flex items-center gap-1">
+                                            <DollarSign size={8} /> Gasto
+                                        </p>
+                                        <p className="text-base font-bold text-white">${item.insights?.data?.[0]?.spend || "0"}</p>
+                                    </div>
+                                    <div className="bg-black/40 p-3 rounded-2xl border border-white/5">
+                                        <p className="text-[8px] text-slate-600 uppercase font-black mb-1 flex items-center gap-1">
+                                            <TrendingUp size={8} /> Result.
+                                        </p>
+                                        <p className="text-base font-bold text-blue-500">{item.insights?.data?.[0]?.actions?.[0]?.value || 0}</p>
+                                    </div>
+                                </div>
+
+                                {selected.includes(item.id) && (
+                                    <div className="absolute -top-2 -right-2 bg-blue-600 text-white rounded-full p-1 shadow-lg border-2 border-[#050505]">
+                                        <CheckCircle2 size={16} />
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
         </div>
     );
 };
