@@ -7,12 +7,15 @@ from pydantic import BaseModel
 import httpx
 from datetime import datetime
 
-app = FastAPI(title="Meta Ads Control Center")
+app = FastAPI(
+    title="Meta Ads Control Center",
+    description="API para el control de encendido/apagado de anuncios de Meta",
+    version="1.0.0"
+)
 
 # Configuración de CORS para producción
-# Añadimos tu dominio específico para permitir las peticiones desde el navegador
 origins = [
-    "http://localhost:8000",
+    "http://localhost:3000",
     "http://manejometa.libresdeumas.com",
     "https://manejometa.libresdeumas.com",
 ]
@@ -25,9 +28,9 @@ app.add_middleware(
 )
 
 # --- CONFIGURACIÓN DE META ---
-ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "YOUR_TOKEN_HERE")
-AD_ACCOUNT_ID = os.getenv("META_AD_ACCOUNT_ID", "act_YOUR_ACCOUNT_ID")
-API_VERSION = "v24.0"
+ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "")
+AD_ACCOUNT_ID = os.getenv("META_AD_ACCOUNT_ID", "")
+API_VERSION = "v19.0"
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 
 # --- MODELOS DE DATOS ---
@@ -38,79 +41,68 @@ class AdStatusUpdate(BaseModel):
 class ScheduleAction(BaseModel):
     ad_ids: List[str]
     status: str
-    execution_time: str # ISO format
-
-# --- UTILIDADES ---
-async def fetch_from_meta(endpoint: str, params: dict = None):
-    if params is None:
-        params = {}
-    params["access_token"] = ACCESS_TOKEN
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{BASE_URL}/{endpoint}", params=params)
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail=response.json())
-        return response.json()
-
-async def update_meta_status(ad_id: str, status: str):
-    params = {
-        "status": status,
-        "access_token": ACCESS_TOKEN
-    }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(f"{BASE_URL}/{ad_id}", params=params)
-        return response.status_code == 200
+    execution_time: str 
 
 # --- ENDPOINTS ---
 
+@app.get("/")
+async def root():
+    """
+    Ruta de salud (Health Check)
+    """
+    return {
+        "status": "online",
+        "message": "Meta Ads Control API is running",
+        "endpoints": {
+            "docs": "/docs",
+            "dashboard": "/ads/dashboard"
+        }
+    }
+
 @app.get("/ads/dashboard")
 async def get_dashboard_data():
-    """
-    Obtiene anuncios con presupuesto, gasto y resultados.
-    """
-    ad_sets_data = await fetch_from_meta(f"{AD_ACCOUNT_ID}/adsets", params={
-        "fields": "name,status,daily_budget,lifetime_budget,insights{spend,actions}"
-    })
+    if not ACCESS_TOKEN or not AD_ACCOUNT_ID:
+        raise HTTPException(status_code=400, detail="Faltan credenciales de Meta en el archivo .env")
     
-    ads_data = await fetch_from_meta(f"{AD_ACCOUNT_ID}/ads", params={
-        "fields": "name,status,adset_id,insights{spend,actions}"
-    })
+    try:
+        async with httpx.AsyncClient() as client:
+            # Obtener AdSets
+            adsets_res = await client.get(
+                f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", 
+                params={
+                    "fields": "name,status,daily_budget,lifetime_budget,insights{spend,actions}",
+                    "access_token": ACCESS_TOKEN
+                }
+            )
+            
+            # Obtener Ads
+            ads_res = await client.get(
+                f"{BASE_URL}/{AD_ACCOUNT_ID}/ads", 
+                params={
+                    "fields": "name,status,adset_id,insights{spend,actions}",
+                    "access_token": ACCESS_TOKEN
+                }
+            )
 
-    return {
-        "ad_sets": ad_sets_data.get("data", []),
-        "ads": ads_data.get("data", [])
-    }
+            return {
+                "ad_sets": adsets_res.json().get("data", []),
+                "ads": ads_res.json().get("data", [])
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/ads/toggle-status")
 async def toggle_status(update: AdStatusUpdate):
-    """
-    Enciende o apaga anuncios o grupos de forma masiva.
-    """
     results = []
-    for ad_id in update.ad_ids:
-        success = await update_meta_status(ad_id, update.status)
-        results.append({"id": ad_id, "success": success})
+    async with httpx.AsyncClient() as client:
+        for ad_id in update.ad_ids:
+            res = await client.post(
+                f"{BASE_URL}/{ad_id}", 
+                params={"status": update.status, "access_token": ACCESS_TOKEN}
+            )
+            results.append({"id": ad_id, "success": res.status_code == 200})
     
     return {"results": results, "new_status": update.status}
-
-@app.post("/ads/schedule")
-async def schedule_action(action: ScheduleAction, background_tasks: BackgroundTasks):
-    """
-    Programa una acción de encendido/apagado.
-    """
-    target_time = datetime.fromisoformat(action.execution_time)
-    delay = (target_time - datetime.now()).total_seconds()
-    
-    if delay < 0:
-        raise HTTPException(status_code=400, detail="La fecha debe ser futura")
-
-    async def delayed_task():
-        await asyncio.sleep(delay)
-        for ad_id in action.ad_ids:
-            await update_meta_status(ad_id, action.status)
-
-    background_tasks.add_task(delayed_task)
-    return {"message": f"Programado para {action.execution_time}"}
 
 if __name__ == "__main__":
     import uvicorn
