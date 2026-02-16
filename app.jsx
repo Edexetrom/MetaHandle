@@ -1,11 +1,8 @@
-/**
- * ARCHIVO: app.jsx
- * IMPORTANTE: Debe llamarse exactamente "app.jsx" para coincidir con index.html
- */
+// Nota: Usamos los globales React y lucide inyectados por el index.html
 const { useState, useEffect, useCallback } = React;
 
 /**
- * --- COMPONENTE: AD CARD ---
+ * --- COMPONENTE: TARJETA DE ADSET/AD ---
  */
 const AdCard = ({ item, isSelected, onSelect }) => {
     const { Power, DollarSign, TrendingUp, CheckCircle2, Layers, Target } = window.lucide;
@@ -17,8 +14,8 @@ const AdCard = ({ item, isSelected, onSelect }) => {
         <div
             onClick={() => onSelect(item.id)}
             className={`group relative p-6 rounded-[2rem] cursor-pointer transition-all duration-300 border ${isSelected
-                    ? 'border-blue-500 bg-blue-500/10 scale-[0.98] shadow-2xl shadow-blue-900/20'
-                    : 'border-white/5 bg-[#0a0a0a] hover:border-white/20 hover:bg-white/[0.03]'
+                    ? 'border-blue-500 bg-blue-500/10 scale-[0.98] shadow-2xl'
+                    : 'border-white/5 bg-[#0a0a0a] hover:border-white/20'
                 }`}
         >
             <div className="flex justify-between items-start mb-6">
@@ -35,11 +32,10 @@ const AdCard = ({ item, isSelected, onSelect }) => {
                     <p className="text-[10px] text-slate-600 font-mono mt-1">ID: {item.id}</p>
                 </div>
 
-                <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[9px] font-black tracking-widest ${item.status === 'ACTIVE'
+                <div className={`px-3 py-1 rounded-full border text-[9px] font-black tracking-widest ${item.status === 'ACTIVE'
                         ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
                         : 'bg-rose-500/10 text-rose-500 border-rose-500/20'
                     }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${item.status === 'ACTIVE' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
                     {item.status}
                 </div>
             </div>
@@ -60,7 +56,7 @@ const AdCard = ({ item, isSelected, onSelect }) => {
             </div>
 
             {isSelected && (
-                <div className="absolute -top-2 -right-2 bg-blue-600 text-white rounded-full p-1.5 shadow-2xl border-4 border-[#020202] animate-in zoom-in">
+                <div className="absolute -top-2 -right-2 bg-blue-600 text-white rounded-full p-1.5 shadow-2xl border-4 border-[#020202]">
                     <CheckCircle2 size={16} />
                 </div>
             )}
@@ -79,7 +75,7 @@ const App = () => {
     const [error, setError] = useState(null);
 
     const API_URL = "https://manejoapi.libresdeumas.com";
-    const { Power, RefreshCw, Clock, AlertTriangle, Activity } = window.lucide;
+    const { Power, RefreshCw, Clock, AlertTriangle, Layers, Activity } = window.lucide;
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -103,7 +99,6 @@ const App = () => {
     };
 
     const handleAction = async (status) => {
-        if (selected.length === 0) return;
         setLoading(true);
         try {
             await fetch(`${API_URL}/ads/toggle`, {
@@ -123,7 +118,7 @@ const App = () => {
     const currentItems = mode === 'adsets' ? data.ad_sets : data.ads;
 
     return (
-        <div className="min-h-screen bg-[#020202] text-slate-100 p-6 md:p-12 animate-in fade-in duration-500">
+        <div className="min-h-screen bg-[#020202] text-slate-100 p-6 md:p-12">
             {/* Header */}
             <header className="flex flex-col lg:flex-row justify-between items-center bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] mb-10 shadow-2xl">
                 <div className="flex items-center gap-5">
@@ -140,14 +135,14 @@ const App = () => {
                     <button
                         onClick={() => handleAction('ACTIVE')}
                         disabled={selected.length === 0 || loading}
-                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-20 px-8 py-3 rounded-2xl text-xs font-black transition-all shadow-lg active:scale-95"
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-20 px-8 py-3 rounded-2xl text-xs font-black transition-all"
                     >
                         <Power size={14} /> ON
                     </button>
                     <button
                         onClick={() => handleAction('PAUSED')}
                         disabled={selected.length === 0 || loading}
-                        className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-20 px-8 py-3 rounded-2xl text-xs font-black transition-all shadow-lg active:scale-95"
+                        className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-20 px-8 py-3 rounded-2xl text-xs font-black transition-all"
                     >
                         <Power size={14} /> OFF
                     </button>
@@ -169,7 +164,7 @@ const App = () => {
                     <h2 className="text-[10px] font-black text-blue-500 uppercase mb-6 tracking-widest flex items-center gap-2">
                         <Clock size={14} /> Programador
                     </h2>
-                    <input type="datetime-local" className="w-full bg-black border border-white/10 rounded-xl p-4 text-sm text-white mb-6 outline-none focus:border-blue-500 transition-colors" />
+                    <input type="datetime-local" className="w-full bg-black border border-white/10 rounded-xl p-4 text-sm text-white mb-6 outline-none focus:border-blue-500" />
                     <button className="w-full bg-white/5 hover:bg-blue-600 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">
                         Programar
                     </button>
@@ -177,11 +172,11 @@ const App = () => {
 
                 <main className="xl:col-span-3">
                     <div className="flex gap-4 mb-8 bg-white/5 p-2 rounded-2xl inline-flex border border-white/5">
-                        <button onClick={() => { setMode('adsets'); setSelected([]); }} className={`px-10 py-3 rounded-xl text-xs font-black transition-all ${mode === 'adsets' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>CONJUNTOS</button>
-                        <button onClick={() => { setMode('ads'); setSelected([]); }} className={`px-10 py-3 rounded-xl text-xs font-black transition-all ${mode === 'ads' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>ANUNCIOS</button>
+                        <button onClick={() => setMode('adsets')} className={`px-10 py-3 rounded-xl text-xs font-black transition-all ${mode === 'adsets' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>CONJUNTOS</button>
+                        <button onClick={() => setMode('ads')} className={`px-10 py-3 rounded-xl text-xs font-black transition-all ${mode === 'ads' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>ANUNCIOS</button>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {currentItems.map(item => (
                             <AdCard
                                 key={item.id}
@@ -197,6 +192,4 @@ const App = () => {
     );
 };
 
-// Renderizado final
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+export default App;
