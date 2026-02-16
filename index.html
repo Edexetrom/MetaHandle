@@ -4,31 +4,154 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meta Ads Manager</title>
-    <!-- Librerías desde CDN para máxima portabilidad -->
+    <title>Meta Ads Manager Pro</title>
+    <!-- Librerías desde CDN -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+
+        body {
+            background-color: #020202;
+            color: #f8fafc;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .glass {
+            background: rgba(10, 10, 10, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    </style>
 </head>
 
 <body>
     <div id="root"></div>
 
-    <!-- Aquí es donde cargaríamos el archivo App.jsx -->
-    <!-- En este entorno, incluimos el código directamente para la previsualización funcional -->
-    <script src="./App.jsx" type="text/babel">
-        // Importamos manualmente los iconos que usará Lucide
-        const {
-            Power, RefreshCw, Clock, Layers,
-            DollarSign, TrendingUp, CheckCircle2, AlertTriangle
-        } = lucide;
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+        const { Power, RefreshCw, Clock, Layers, DollarSign, TrendingUp, CheckCircle2, AlertTriangle } = lucide;
 
-        // Pegamos aquí el código de App.jsx para que el navegador lo interprete
-        // Nota: En producción, usaríamos <script src="./App.jsx" type="text/babel">
-        {/* PEGAR CONTENIDO DE App.jsx AQUÍ PARA DESPLIEGUE RÁPIDO O MANTENER SEPARADO */ }
+        // IMPORTANTE: Como el Backend ahora está en el puerto 80, no necesita puerto en la URL
+        const API_URL = "https://manejoapi.libresdeumas.com";
 
+        const App = () => {
+            const [data, setData] = useState({ ad_sets: [], ads: [] });
+            const [loading, setLoading] = useState(false);
+            const [selected, setSelected] = useState([]);
+            const [mode, setMode] = useState('adsets');
+            const [date, setDate] = useState('');
+            const [error, setError] = useState(null);
+
+            const fetchData = useCallback(async () => {
+                setLoading(true);
+                setError(null);
+                try {
+                    const res = await fetch(`${API_URL}/ads/dashboard`);
+                    if (!res.ok) throw new Error("API no responde o error de CORS");
+                    const json = await res.json();
+                    setData(json);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            }, []);
+
+            useEffect(() => { fetchData(); }, [fetchData]);
+
+            const handleAction = async (status) => {
+                if (selected.length === 0) return;
+                setLoading(true);
+                try {
+                    await fetch(`${API_URL}/ads/toggle`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ad_ids: selected, status })
+                    });
+                    await fetchData();
+                    setSelected([]);
+                } catch (err) { setError("Error ejecutando acción."); }
+            };
+
+            const items = mode === 'adsets' ? data.ad_sets : data.ads;
+
+            return (
+                <div className="min-h-screen p-6 md:p-12">
+                    <header className="glass p-8 rounded-[2.5rem] mb-10 flex flex-col md:flex-row justify-between items-center shadow-2xl">
+                        <div className="flex items-center gap-5">
+                            <div className="bg-blue-600 p-3 rounded-2xl shadow-lg shadow-blue-900/40">
+                                <Layers className="text-white" size={28} />
+                            </div>
+                            <div>
+                                <h1 className="text-2xl font-black uppercase italic text-white tracking-tighter">Ads Manager Pro</h1>
+                                <p className="text-[10px] text-blue-400 font-mono">Backend: {API_URL}</p>
+                            </div>
+                        </div>
+                        <div className="flex gap-4 mt-6 md:mt-0">
+                            <button onClick={() => handleAction('ACTIVE')} disabled={selected.length === 0} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2.5 rounded-xl font-bold text-xs disabled:opacity-20 transition-all">ON</button>
+                            <button onClick={() => handleAction('PAUSED')} disabled={selected.length === 0} className="bg-rose-600 hover:bg-rose-500 px-6 py-2.5 rounded-xl font-bold text-xs disabled:opacity-20 transition-all">OFF</button>
+                            <button onClick={fetchData} className="p-2.5 bg-white/5 rounded-xl border border-white/10"><RefreshCw size={20} className={loading ? 'animate-spin' : ''} /></button>
+                        </div>
+                    </header>
+
+                    {error && (
+                        <div className="mb-10 bg-rose-500/10 border border-rose-500/20 p-5 rounded-3xl flex items-center gap-4 text-rose-400">
+                            <AlertTriangle size={24} />
+                            <p className="text-sm font-bold uppercase">{error}</p>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 xl:grid-cols-4 gap-10">
+                        <aside className="glass p-8 rounded-[2rem] h-fit">
+                            <h2 className="text-[10px] font-black text-slate-500 uppercase mb-6 tracking-widest flex items-center gap-2"><Clock size={12} /> Programador</h2>
+                            <input type="datetime-local" className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm text-white mb-4 outline-none focus:border-blue-500" onChange={(e) => setDate(e.target.value)} />
+                            <p className="text-[9px] text-slate-600 italic leading-relaxed">* Próximamente integración completa de cron-jobs.</p>
+                        </aside>
+
+                        <div className="xl:col-span-3">
+                            <div className="flex gap-4 mb-8 bg-white/5 p-1.5 rounded-2xl inline-flex border border-white/5">
+                                <button onClick={() => setMode('adsets')} className={`px-8 py-2.5 rounded-xl text-xs font-black transition-all ${mode === 'adsets' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-white'}`}>GRUPOS</button>
+                                <button onClick={() => setMode('ads')} className={`px-8 py-2.5 rounded-xl text-xs font-black transition-all ${mode === 'ads' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-white'}`}>ANUNCIOS</button>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {items.map(item => (
+                                    <div key={item.id} onClick={() => setSelected(prev => prev.includes(item.id) ? prev.filter(i => i !== item.id) : [...prev, item.id])} className={`glass p-6 rounded-[2rem] cursor-pointer relative transition-all ${selected.includes(item.id) ? 'border-blue-500 bg-blue-500/5' : 'hover:border-white/20'}`}>
+                                        <div className="flex justify-between items-start mb-6">
+                                            <div className="max-w-[70%]">
+                                                <h3 className="font-bold text-sm truncate uppercase text-white">{item.name}</h3>
+                                                <p className="text-[9px] text-slate-500 font-mono mt-1">ID: {item.id}</p>
+                                            </div>
+                                            <span className={`text-[8px] px-2 py-1 rounded-lg font-black ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>{item.status}</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
+                                                <p className="text-[8px] text-slate-500 uppercase font-black mb-1 flex items-center gap-1"><DollarSign size={8} /> Gasto</p>
+                                                <p className="text-lg font-bold text-white">${item.insights?.data?.[0]?.spend || "0"}</p>
+                                            </div>
+                                            <div className="bg-black/50 p-4 rounded-2xl border border-white/5">
+                                                <p className="text-[8px] text-slate-500 uppercase font-black mb-1 flex items-center gap-1"><TrendingUp size={8} /> Result.</p>
+                                                <p className="text-lg font-bold text-blue-500">{item.insights?.data?.[0]?.actions?.[0]?.value || 0}</p>
+                                            </div>
+                                        </div>
+                                        {selected.includes(item.id) && (
+                                            <div className="absolute -top-2 -right-2 bg-blue-600 text-white rounded-full p-1 border-2 border-[#020202]"><CheckCircle2 size={16} /></div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 
