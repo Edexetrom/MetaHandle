@@ -4,123 +4,55 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meta API Debugger</title>
+    <title>Meta Ads Manager Enterprise</title>
+
+    <!-- LIBRERÍAS NECESARIAS -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+    <script src="https://unpkg.com/lucide@latest" crossorigin></script>
+
     <style>
         body {
-            background-color: #0f172a;
-            color: #f8fafc;
-            font-family: sans-serif;
+            background-color: #020202;
+            margin: 0;
+            overflow-x: hidden;
         }
 
-        .card {
+        /* Scrollbar personalizada para diseño premium */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #020202;
+        }
+
+        ::-webkit-scrollbar-thumb {
             background: #1e293b;
-            border: 1px solid #334155;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 10px;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
         }
     </style>
 </head>
 
-<body class="p-10">
-    <div class="max-w-4xl mx-auto">
-        <header class="mb-10 flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-bold text-white">Debugger de Datos</h1>
-                <p class="text-slate-400 mt-2">Probando conexión con: <span id="api-url-text"
-                        class="font-mono text-blue-400"></span></p>
-            </div>
-            <button onclick="fetchData()"
-                class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold transition-all">
-                🔄 Reintentar Carga
-            </button>
-        </header>
+<body>
+    <div id="root"></div>
 
-        <!-- Estado de Conexión -->
-        <div id="status-card" class="card border-blue-500/30">
-            <p id="status-text">Iniciando petición...</p>
-        </div>
+    <!-- Cargamos el archivo App.jsx como un script de tipo Babel -->
+    <script type="text/babel" src="./App.jsx" data-presets="react,stage-3"></script>
 
-        <!-- Contenedor de Datos -->
-        <div id="data-container" class="mt-8">
-            <h2 class="text-xl font-bold mb-4">Grupos de Anuncios (AdSets)</h2>
-            <div id="adsets-list" class="space-y-2">
-                <!-- Se llenará dinámicamente -->
-            </div>
-        </div>
-
-        <!-- Log de Errores -->
-        <div id="error-log" class="hidden mt-10 p-6 bg-red-900/20 border border-red-500/50 rounded-xl">
-            <h3 class="text-red-500 font-bold uppercase text-sm mb-2">Log de Errores:</h3>
-            <pre id="error-details" class="text-xs text-red-300 whitespace-pre-wrap"></pre>
-        </div>
-    </div>
-
+    <!-- Fallback por si el archivo externo falla -->
     <script>
-        const API_URL = "https://manejoapi.libresdeumas.com";
-        document.getElementById('api-url-text').textContent = API_URL;
-
-        async function fetchData() {
-            const statusText = document.getElementById('status-text');
-            const errorLog = document.getElementById('error-log');
-            const errorDetails = document.getElementById('error-details');
-            const adsetsList = document.getElementById('adsets-list');
-
-            statusText.textContent = "⌛ Llamando a la API...";
-            statusText.className = "text-blue-400";
-            errorLog.classList.add('hidden');
-            adsetsList.innerHTML = "";
-
-            try {
-                const response = await fetch(`${API_URL}/ads/dashboard`, {
-                    method: 'GET',
-                    mode: 'cors',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Error HTTP: ${response.status} ${response.statusText}`);
-                }
-
-                const data = await response.json();
-                statusText.textContent = "✅ Datos recibidos con éxito";
-                statusText.className = "text-emerald-400 font-bold";
-
-                if (data.ad_sets && data.ad_sets.length > 0) {
-                    data.ad_sets.forEach(item => {
-                        const div = document.createElement('div');
-                        div.className = "card flex justify-between items-center";
-                        div.innerHTML = `
-                            <div>
-                                <p class="font-bold text-white">${item.name}</p>
-                                <p class="text-xs text-slate-500">ID: ${item.id}</p>
-                            </div>
-                            <div class="text-right">
-                                <span class="px-3 py-1 rounded-full text-[10px] font-bold ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}">
-                                    ${item.status}
-                                </span>
-                            </div>
-                        `;
-                        adsetsList.appendChild(div);
-                    });
-                } else {
-                    adsetsList.innerHTML = "<p class='text-slate-500 italic'>No hay AdSets activos o la cuenta está vacía.</p>";
-                }
-
-            } catch (error) {
-                statusText.textContent = "❌ Fallo en la conexión";
-                statusText.className = "text-red-500 font-bold";
-                errorLog.classList.remove('hidden');
-                errorDetails.textContent = error.stack || error.message;
-                console.error("Error completo:", error);
+        window.addEventListener('error', function (e) {
+            if (e.target.src && e.target.src.includes('App.jsx')) {
+                console.error('Error cargando App.jsx. Verifique la ruta.');
             }
-        }
-
-        // Ejecutar al cargar la página
-        window.onload = fetchData;
+        }, true);
     </script>
 </body>
 
