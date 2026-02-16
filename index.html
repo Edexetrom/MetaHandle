@@ -5,10 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Meta Ads Manager Enterprise</title>
-    <!-- Evita el error 404 de favicon -->
     <link rel="icon" href="data:,">
 
-    <!-- LIBRERÍAS PROPORCIONADAS POR CDN -->
+    <!-- LIBRERÍAS (CORS habilitado) -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -46,28 +45,26 @@
         <div
             style="border: 3px solid #334155; border-top: 3px solid #3b82f6; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 15px;">
         </div>
-        <p style="color: #475569; font-size: 10px; letter-spacing: 2px;">INICIANDO MÓDULOS...</p>
+        <p style="color: #475569; font-size: 10px; letter-spacing: 2px;">TRANSPLANDO JSX...</p>
     </div>
 
     <div id="root"></div>
 
-    <!-- CARGA MODULAR DEL ARCHIVO JSX -->
-    <script type="text/babel" src="./app.jsx" data-presets="react,stage-3"></script>
+    <!-- CAMBIO CRÍTICO: Usamos presets "env" y "react" solamente para evitar el error de decorators -->
+    <script type="text/babel" src="./app.jsx" data-presets="env,react"></script>
 
     <script>
-        // Animación simple para el loader
         const style = document.createElement('style');
         style.innerHTML = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
         document.head.appendChild(style);
 
-        // Verificación de carga
         window.addEventListener('load', () => {
             setTimeout(() => {
                 const root = document.getElementById('root');
                 if (root && root.innerHTML === "") {
-                    console.error("Error: El componente React no se renderizó. Revisa la consola para errores de Babel o app.jsx.");
+                    console.error("React no renderizó. Revisa errores de sintaxis en app.jsx.");
                 }
-            }, 5000);
+            }, 8000);
         });
     </script>
 </body>
