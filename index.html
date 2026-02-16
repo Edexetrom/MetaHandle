@@ -5,12 +5,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Meta Ads Manager Enterprise</title>
-    <!-- Librerías desde CDN -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- LIBRERÍAS (Cambiamos a versiones específicas y Babel 7) -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Babel 7 es esencial para React 18 -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
 
@@ -19,6 +23,7 @@
             background-color: #020202;
             margin: 0;
             color: white;
+            overflow-x: hidden;
         }
 
         .glass {
@@ -27,49 +32,61 @@
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        #error-display {
-            display: none;
+        /* Estilo para el estado de carga inicial */
+        #loader {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #000;
-            color: #ff4444;
-            padding: 40px;
-            z-index: 9999;
-            font-family: monospace;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
         }
     </style>
 </head>
 
 <body>
-    <!-- Capturador de errores críticos de JS -->
-    <div id="error-display">
-        <h1 style="font-size: 24px;">❌ Error Crítico de Carga</h1>
-        <pre id="error-message" style="margin-top: 20px; white-space: pre-wrap;"></pre>
-        <button onclick="location.reload()"
-            style="margin-top: 20px; padding: 10px; background: #333; color: white; border: none; cursor: pointer;">Reintentar</button>
+    <!-- Si ves esto en pantalla, el problema es que el script de React no arrancó -->
+    <div id="loader">
+        <div
+            style="border: 4px solid #333; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px;">
+        </div>
+        <p style="color: #666; font-family: monospace; font-size: 12px;">INICIALIZANDO INTERFAZ...</p>
     </div>
 
     <div id="root"></div>
 
+    <style>
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+
+    <!-- Script de diagnóstico -->
     <script>
-        // Script para mostrar errores de JS en pantalla si React falla
-        window.onerror = function (msg, url, lineNo, columnNo, error) {
-            document.getElementById('error-display').style.display = 'block';
-            document.getElementById('error-message').textContent =
-                "Mensaje: " + msg + "\nURL: " + url + "\nLínea: " + lineNo + "\nError: " + error;
-            return false;
-        };
+        window.addEventListener('error', function (e) {
+            console.error("Error detectado:", e.message);
+            const loader = document.getElementById('loader');
+            if (loader) {
+                loader.innerHTML = `<h1 style="color: #ef4444">❌ Error de Carga</h1><p style="color: #999; font-size: 10px; max-width: 400px; margin: 10px auto;">${e.message}</p>`;
+            }
+        });
     </script>
 
-    <script type="text/babel">
-        // IMPORTANTE: Extraemos de los globales inyectados por CDN
+    <!-- Cambiamos el type a text/babel y usamos presets modernos -->
+    <script type="text/babel" data-presets="react, stage-3">
         const { useState, useEffect, useCallback } = React;
-        const { Power, RefreshCw, Clock, Layers, DollarSign, TrendingUp, CheckCircle2, AlertTriangle } = lucide;
 
-        // TU URL DE BACKEND
+        // Función segura para obtener iconos de Lucide
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const LucideIcon = lucide[name];
+            return LucideIcon ? <LucideIcon size={size} className={className} /> : null;
+        };
+
         const API_URL = "https://manejoapi.libresdeumas.com";
 
         const App = () => {
@@ -80,16 +97,23 @@
             const [date, setDate] = useState('');
             const [error, setError] = useState(null);
 
+            // Quitar el loader inicial una vez que React monta
+            useEffect(() => {
+                const loader = document.getElementById('loader');
+                if (loader) loader.style.display = 'none';
+            }, []);
+
             const fetchData = useCallback(async () => {
                 setLoading(true);
                 setError(null);
                 try {
                     const res = await fetch(`${API_URL}/ads/dashboard`);
-                    if (!res.ok) throw new Error(`API Offline (${res.status}). Revisa CORS o HTTPS.`);
+                    if (!res.ok) throw new Error(`API respondió con error ${res.status}`);
                     const json = await res.json();
                     setData(json);
                 } catch (err) {
                     setError(err.message);
+                    console.error("Error fetching data:", err);
                 } finally {
                     setLoading(false);
                 }
@@ -108,21 +132,23 @@
                     });
                     fetchData();
                     setSelected([]);
-                } catch (err) { setError("Error ejecutando acción."); }
+                } catch (err) {
+                    setError("No se pudo ejecutar el cambio en Meta.");
+                }
             };
 
             const items = mode === 'adsets' ? data.ad_sets : data.ads;
 
             return (
-                <div className="min-h-screen p-6 md:p-12">
+                <div className="min-h-screen p-6 md:p-12 animate-in fade-in duration-700">
                     <header className="glass p-8 rounded-[2.5rem] mb-10 flex flex-col md:flex-row justify-between items-center shadow-2xl">
                         <div className="flex items-center gap-5">
                             <div className="bg-blue-600 p-3 rounded-2xl shadow-xl shadow-blue-900/40">
-                                <Layers className="text-white" size={28} />
+                                <Icon name="Layers" size={28} className="text-white" />
                             </div>
                             <div>
                                 <h1 className="text-2xl font-black uppercase italic text-white tracking-tighter">Ads Manager Pro</h1>
-                                <p className="text-[10px] text-blue-400 font-mono tracking-widest">BACKEND: {API_URL}</p>
+                                <p className="text-[10px] text-blue-400 font-mono tracking-widest">STABLE v2.1 | API: {API_URL}</p>
                             </div>
                         </div>
 
@@ -130,26 +156,26 @@
                             <button
                                 onClick={() => handleAction('ACTIVE')}
                                 disabled={selected.length === 0}
-                                className="bg-emerald-600 hover:bg-emerald-500 px-8 py-3 rounded-xl font-bold text-xs disabled:opacity-20 transition-all shadow-lg"
+                                className="bg-emerald-600 hover:bg-emerald-500 px-8 py-3 rounded-xl font-bold text-xs disabled:opacity-20 transition-all shadow-lg active:scale-95"
                             >
                                 ON
                             </button>
                             <button
                                 onClick={() => handleAction('PAUSED')}
                                 disabled={selected.length === 0}
-                                className="bg-rose-600 hover:bg-rose-500 px-8 py-3 rounded-xl font-bold text-xs disabled:opacity-20 transition-all shadow-lg"
+                                className="bg-rose-600 hover:bg-rose-500 px-8 py-3 rounded-xl font-bold text-xs disabled:opacity-20 transition-all shadow-lg active:scale-95"
                             >
                                 OFF
                             </button>
-                            <button onClick={fetchData} className="p-3 bg-white/5 rounded-xl border border-white/10">
-                                <RefreshCw size={22} className={loading ? 'animate-spin' : ''} />
+                            <button onClick={fetchData} className="p-3 bg-white/5 rounded-xl border border-white/10 hover:bg-white/10 transition-colors">
+                                <Icon name="RefreshCw" size={22} className={loading ? 'animate-spin' : ''} />
                             </button>
                         </div>
                     </header>
 
                     {error && (
                         <div className="mb-10 bg-rose-500/10 border border-rose-500/20 p-6 rounded-3xl flex items-center gap-4 text-rose-400">
-                            <AlertTriangle size={24} />
+                            <Icon name="AlertTriangle" size={24} />
                             <p className="text-sm font-bold uppercase">{error}</p>
                         </div>
                     )}
@@ -157,11 +183,11 @@
                     <div className="grid grid-cols-1 xl:grid-cols-4 gap-10">
                         <aside className="glass p-8 rounded-[2rem] h-fit">
                             <h2 className="text-[10px] font-black text-slate-500 uppercase mb-6 tracking-widest flex items-center gap-2">
-                                <Clock size={14} /> Programador
+                                <Icon name="Clock" size={14} /> Programador
                             </h2>
                             <input
                                 type="datetime-local"
-                                className="w-full bg-black border border-white/10 rounded-xl p-4 text-sm text-white mb-6 outline-none focus:border-blue-500"
+                                className="w-full bg-black border border-white/10 rounded-xl p-4 text-sm text-white mb-6 outline-none focus:border-blue-500 transition-colors"
                                 onChange={(e) => setDate(e.target.value)}
                             />
                             <p className="text-[9px] text-slate-600 italic leading-relaxed">* Selecciona AdSets y define hora para programar acciones.</p>
@@ -173,36 +199,40 @@
                                 <button onClick={() => setMode('ads')} className={`px-10 py-3 rounded-xl text-xs font-black transition-all ${mode === 'ads' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}>ANUNCIOS</button>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {items.map(item => (
-                                    <div
-                                        key={item.id}
-                                        onClick={() => setSelected(prev => prev.includes(item.id) ? prev.filter(i => i !== item.id) : [...prev, item.id])}
-                                        className={`glass p-8 rounded-[2.5rem] cursor-pointer relative transition-all duration-300 ${selected.includes(item.id) ? 'border-blue-500 bg-blue-500/10 scale-[0.98]' : 'hover:border-white/20'}`}
-                                    >
-                                        <div className="flex justify-between items-start mb-8">
-                                            <div className="max-w-[70%]">
-                                                <h3 className="font-bold text-base truncate uppercase text-white tracking-tighter" title={item.name}>{item.name}</h3>
-                                                <p className="text-[10px] text-slate-500 font-mono mt-1">ID: {item.id}</p>
+                            {loading && items.length === 0 ? (
+                                <div className="p-20 text-center opacity-20 uppercase font-black tracking-widest">Cargando datos de Meta...</div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {items.map(item => (
+                                        <div
+                                            key={item.id}
+                                            onClick={() => setSelected(prev => prev.includes(item.id) ? prev.filter(i => i !== item.id) : [...prev, item.id])}
+                                            className={`glass p-8 rounded-[2.5rem] cursor-pointer relative transition-all duration-300 ${selected.includes(item.id) ? 'border-blue-500 bg-blue-500/10 scale-[0.98]' : 'hover:border-white/20'}`}
+                                        >
+                                            <div className="flex justify-between items-start mb-8">
+                                                <div className="max-w-[70%]">
+                                                    <h3 className="font-bold text-base truncate uppercase text-white tracking-tighter" title={item.name}>{item.name}</h3>
+                                                    <p className="text-[10px] text-slate-500 font-mono mt-1">ID: {item.id}</p>
+                                                </div>
+                                                <span className={`text-[9px] px-3 py-1.5 rounded-xl font-black tracking-widest ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'}`}>{item.status}</span>
                                             </div>
-                                            <span className={`text-[9px] px-3 py-1.5 rounded-xl font-black tracking-widest ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'}`}>{item.status}</span>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="bg-black/50 p-5 rounded-3xl border border-white/5">
+                                                    <p className="text-[9px] text-slate-500 uppercase font-black mb-2 flex items-center gap-1"><Icon name="DollarSign" size={10} /> Gasto Hoy</p>
+                                                    <p className="text-xl font-black text-white">${item.insights?.data?.[0]?.spend || "0"}</p>
+                                                </div>
+                                                <div className="bg-black/50 p-5 rounded-3xl border border-white/5">
+                                                    <p className="text-[9px] text-slate-500 uppercase font-black mb-2 flex items-center gap-1"><Icon name="TrendingUp" size={10} /> Result.</p>
+                                                    <p className="text-xl font-black text-blue-500">{item.insights?.data?.[0]?.actions?.[0]?.value || 0}</p>
+                                                </div>
+                                            </div>
+                                            {selected.includes(item.id) && (
+                                                <div className="absolute -top-3 -right-3 bg-blue-600 text-white rounded-full p-2 shadow-2xl border-4 border-[#020202]"><Icon name="CheckCircle2" size={18} /></div>
+                                            )}
                                         </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="bg-black/50 p-5 rounded-3xl border border-white/5">
-                                                <p className="text-[9px] text-slate-500 uppercase font-black mb-2 flex items-center gap-1"><DollarSign size={10} /> Gasto Hoy</p>
-                                                <p className="text-xl font-black text-white">${item.insights?.data?.[0]?.spend || "0"}</p>
-                                            </div>
-                                            <div className="bg-black/50 p-5 rounded-3xl border border-white/5">
-                                                <p className="text-[9px] text-slate-500 uppercase font-black mb-2 flex items-center gap-1"><TrendingUp size={10} /> Result.</p>
-                                                <p className="text-xl font-black text-blue-500">{item.insights?.data?.[0]?.actions?.[0]?.value || 0}</p>
-                                            </div>
-                                        </div>
-                                        {selected.includes(item.id) && (
-                                            <div className="absolute -top-3 -right-3 bg-blue-600 text-white rounded-full p-2 shadow-2xl border-4 border-[#020202]"><CheckCircle2 size={18} /></div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
