@@ -17,18 +17,59 @@
         body {
             font-family: 'Inter', sans-serif;
             background-color: #020202;
+            margin: 0;
+            color: white;
+        }
+
+        .glass {
+            background: rgba(10, 10, 10, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        #error-display {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            color: #ff4444;
+            padding: 40px;
+            z-index: 9999;
+            font-family: monospace;
         }
     </style>
 </head>
 
 <body>
+    <!-- Capturador de errores críticos de JS -->
+    <div id="error-display">
+        <h1 style="font-size: 24px;">❌ Error Crítico de Carga</h1>
+        <pre id="error-message" style="margin-top: 20px; white-space: pre-wrap;"></pre>
+        <button onclick="location.reload()"
+            style="margin-top: 20px; padding: 10px; background: #333; color: white; border: none; cursor: pointer;">Reintentar</button>
+    </div>
+
     <div id="root"></div>
 
+    <script>
+        // Script para mostrar errores de JS en pantalla si React falla
+        window.onerror = function (msg, url, lineNo, columnNo, error) {
+            document.getElementById('error-display').style.display = 'block';
+            document.getElementById('error-message').textContent =
+                "Mensaje: " + msg + "\nURL: " + url + "\nLínea: " + lineNo + "\nError: " + error;
+            return false;
+        };
+    </script>
+
     <script type="text/babel">
+        // IMPORTANTE: Extraemos de los globales inyectados por CDN
         const { useState, useEffect, useCallback } = React;
         const { Power, RefreshCw, Clock, Layers, DollarSign, TrendingUp, CheckCircle2, AlertTriangle } = lucide;
 
-        // TUS LIGAS OFICIALES
+        // TU URL DE BACKEND
         const API_URL = "https://manejoapi.libresdeumas.com";
 
         const App = () => {
@@ -44,7 +85,7 @@
                 setError(null);
                 try {
                     const res = await fetch(`${API_URL}/ads/dashboard`);
-                    if (!res.ok) throw new Error("API Offline o error de CORS");
+                    if (!res.ok) throw new Error(`API Offline (${res.status}). Revisa CORS o HTTPS.`);
                     const json = await res.json();
                     setData(json);
                 } catch (err) {
@@ -70,90 +111,99 @@
                 } catch (err) { setError("Error ejecutando acción."); }
             };
 
-            const handleSchedule = async (status) => {
-                if (!date || selected.length === 0) return;
-                try {
-                    const res = await fetch(`${API_URL}/ads/schedule`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ad_ids: selected, status, execution_time: date })
-                    });
-                    if (res.ok) alert("Programación enviada con éxito.");
-                } catch (err) { alert("Error al programar."); }
-            };
-
             const items = mode === 'adsets' ? data.ad_sets : data.ads;
 
             return (
-                <div className="min-h-screen text-slate-100 p-6 md:p-12">
-                    <header className="flex flex-col md:flex-row justify-between items-center bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] mb-10 shadow-2xl">
-                        <div className="flex items-center gap-5 mb-6 md:mb-0">
-                            <div className="bg-blue-600 p-3 rounded-2xl shadow-blue-900/40 shadow-xl">
+                <div className="min-h-screen p-6 md:p-12">
+                    <header className="glass p-8 rounded-[2.5rem] mb-10 flex flex-col md:flex-row justify-between items-center shadow-2xl">
+                        <div className="flex items-center gap-5">
+                            <div className="bg-blue-600 p-3 rounded-2xl shadow-xl shadow-blue-900/40">
                                 <Layers className="text-white" size={28} />
                             </div>
                             <div>
-                                <h1 className="text-2xl font-black tracking-tight text-white uppercase italic">Ads Manager Enterprise</h1>
-                                <p className="text-[10px] text-blue-500 font-mono tracking-widest mt-1">BACKEND: {API_URL}</p>
+                                <h1 className="text-2xl font-black uppercase italic text-white tracking-tighter">Ads Manager Pro</h1>
+                                <p className="text-[10px] text-blue-400 font-mono tracking-widest">BACKEND: {API_URL}</p>
                             </div>
                         </div>
 
-                        <div className="flex gap-4">
-                            <button onClick={() => handleAction('ACTIVE')} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 px-7 py-3 rounded-2xl text-sm font-black transition-all disabled:opacity-20 shadow-lg shadow-emerald-900/20" disabled={selected.length === 0}><Power size={18} /> ON</button>
-                            <button onClick={() => handleAction('PAUSED')} className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 px-7 py-3 rounded-2xl text-sm font-black transition-all disabled:opacity-20 shadow-lg shadow-rose-900/20" disabled={selected.length === 0}><Power size={18} /> OFF</button>
-                            <button onClick={fetchData} className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/10 transition-all"><RefreshCw className={loading ? 'animate-spin' : ''} size={22} /></button>
+                        <div className="flex gap-4 mt-6 md:mt-0">
+                            <button
+                                onClick={() => handleAction('ACTIVE')}
+                                disabled={selected.length === 0}
+                                className="bg-emerald-600 hover:bg-emerald-500 px-8 py-3 rounded-xl font-bold text-xs disabled:opacity-20 transition-all shadow-lg"
+                            >
+                                ON
+                            </button>
+                            <button
+                                onClick={() => handleAction('PAUSED')}
+                                disabled={selected.length === 0}
+                                className="bg-rose-600 hover:bg-rose-500 px-8 py-3 rounded-xl font-bold text-xs disabled:opacity-20 transition-all shadow-lg"
+                            >
+                                OFF
+                            </button>
+                            <button onClick={fetchData} className="p-3 bg-white/5 rounded-xl border border-white/10">
+                                <RefreshCw size={22} className={loading ? 'animate-spin' : ''} />
+                            </button>
                         </div>
                     </header>
 
                     {error && (
-                        <div className="mb-10 bg-rose-500/10 border border-rose-500/20 p-5 rounded-3xl flex items-center gap-4 text-rose-400">
+                        <div className="mb-10 bg-rose-500/10 border border-rose-500/20 p-6 rounded-3xl flex items-center gap-4 text-rose-400">
                             <AlertTriangle size={24} />
-                            <p className="text-sm font-bold uppercase tracking-wider">{error}</p>
+                            <p className="text-sm font-bold uppercase">{error}</p>
                         </div>
                     )}
 
                     <div className="grid grid-cols-1 xl:grid-cols-4 gap-10">
-                        <aside className="xl:col-span-1 bg-[#0a0a0a] border border-white/5 p-8 rounded-[2rem] h-fit">
-                            <h2 className="text-[11px] font-black text-blue-500 uppercase mb-6 tracking-widest flex items-center gap-2"><Clock size={14} /> Scheduler Pro</h2>
-                            <input type="datetime-local" className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm mb-6 outline-none focus:border-blue-500 transition-all text-white" onChange={(e) => setDate(e.target.value)} />
-                            <div className="flex flex-col gap-3">
-                                <button onClick={() => handleSchedule('ACTIVE')} className="w-full bg-white/5 hover:bg-blue-600/20 py-3 rounded-xl border border-white/10 text-xs font-black uppercase transition-all tracking-widest">Programar ON</button>
-                                <button onClick={() => handleSchedule('PAUSED')} className="w-full bg-white/5 hover:bg-rose-600/20 py-3 rounded-xl border border-white/10 text-xs font-black uppercase transition-all tracking-widest">Programar OFF</button>
-                            </div>
+                        <aside className="glass p-8 rounded-[2rem] h-fit">
+                            <h2 className="text-[10px] font-black text-slate-500 uppercase mb-6 tracking-widest flex items-center gap-2">
+                                <Clock size={14} /> Programador
+                            </h2>
+                            <input
+                                type="datetime-local"
+                                className="w-full bg-black border border-white/10 rounded-xl p-4 text-sm text-white mb-6 outline-none focus:border-blue-500"
+                                onChange={(e) => setDate(e.target.value)}
+                            />
+                            <p className="text-[9px] text-slate-600 italic leading-relaxed">* Selecciona AdSets y define hora para programar acciones.</p>
                         </aside>
 
-                        <main className="xl:col-span-3">
-                            <div className="flex gap-4 mb-8 bg-white/5 p-2 rounded-2xl inline-flex border border-white/5">
+                        <div className="xl:col-span-3">
+                            <div className="flex gap-4 mb-8 bg-white/5 p-1.5 rounded-2xl inline-flex border border-white/5">
                                 <button onClick={() => setMode('adsets')} className={`px-10 py-3 rounded-xl text-xs font-black transition-all ${mode === 'adsets' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}>GRUPOS</button>
                                 <button onClick={() => setMode('ads')} className={`px-10 py-3 rounded-xl text-xs font-black transition-all ${mode === 'ads' ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:text-white'}`}>ANUNCIOS</button>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {items.map((item) => (
-                                    <div key={item.id} onClick={() => setSelected(prev => prev.includes(item.id) ? prev.filter(i => i !== item.id) : [...prev, item.id])} className={`group relative bg-[#0a0a0a] border p-8 rounded-[2.5rem] cursor-pointer transition-all duration-300 ${selected.includes(item.id) ? 'border-blue-500 bg-blue-500/5 scale-[0.98]' : 'border-white/5 hover:border-white/20'}`}>
+                                {items.map(item => (
+                                    <div
+                                        key={item.id}
+                                        onClick={() => setSelected(prev => prev.includes(item.id) ? prev.filter(i => i !== item.id) : [...prev, item.id])}
+                                        className={`glass p-8 rounded-[2.5rem] cursor-pointer relative transition-all duration-300 ${selected.includes(item.id) ? 'border-blue-500 bg-blue-500/10 scale-[0.98]' : 'hover:border-white/20'}`}
+                                    >
                                         <div className="flex justify-between items-start mb-8">
                                             <div className="max-w-[70%]">
-                                                <h3 className="font-bold text-base truncate uppercase tracking-tighter text-white" title={item.name}>{item.name}</h3>
-                                                <p className="text-[10px] text-slate-600 font-mono mt-2 tracking-widest">ID: {item.id}</p>
+                                                <h3 className="font-bold text-base truncate uppercase text-white tracking-tighter" title={item.name}>{item.name}</h3>
+                                                <p className="text-[10px] text-slate-500 font-mono mt-1">ID: {item.id}</p>
                                             </div>
-                                            <span className={`text-[9px] px-3 py-1.5 rounded-xl font-black tracking-widest ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>{item.status}</span>
+                                            <span className={`text-[9px] px-3 py-1.5 rounded-xl font-black tracking-widest ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'}`}>{item.status}</span>
                                         </div>
                                         <div className="grid grid-cols-2 gap-4">
-                                            <div className="bg-black/60 p-5 rounded-3xl border border-white/5">
-                                                <p className="text-[9px] text-slate-600 uppercase font-black mb-2 flex items-center gap-1"><DollarSign size={10} /> Gasto Hoy</p>
+                                            <div className="bg-black/50 p-5 rounded-3xl border border-white/5">
+                                                <p className="text-[9px] text-slate-500 uppercase font-black mb-2 flex items-center gap-1"><DollarSign size={10} /> Gasto Hoy</p>
                                                 <p className="text-xl font-black text-white">${item.insights?.data?.[0]?.spend || "0"}</p>
                                             </div>
-                                            <div className="bg-black/60 p-5 rounded-3xl border border-white/5">
-                                                <p className="text-[9px] text-slate-600 uppercase font-black mb-2 flex items-center gap-1"><TrendingUp size={10} /> Result. Hoy</p>
+                                            <div className="bg-black/50 p-5 rounded-3xl border border-white/5">
+                                                <p className="text-[9px] text-slate-500 uppercase font-black mb-2 flex items-center gap-1"><TrendingUp size={10} /> Result.</p>
                                                 <p className="text-xl font-black text-blue-500">{item.insights?.data?.[0]?.actions?.[0]?.value || 0}</p>
                                             </div>
                                         </div>
                                         {selected.includes(item.id) && (
-                                            <div className="absolute -top-3 -right-3 bg-blue-600 text-white rounded-full p-1.5 shadow-2xl border-4 border-[#020202]"><CheckCircle2 size={18} /></div>
+                                            <div className="absolute -top-3 -right-3 bg-blue-600 text-white rounded-full p-2 shadow-2xl border-4 border-[#020202]"><CheckCircle2 size={18} /></div>
                                         )}
                                     </div>
                                 ))}
                             </div>
-                        </main>
+                        </div>
                     </div>
                 </div>
             );
