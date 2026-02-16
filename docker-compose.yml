@@ -4,7 +4,7 @@ services:
     build: .
     container_name: meta_backend_api
     ports:
-      - "8000:8000"
+      - "8000"
     env_file:
       - .env
     restart: always
@@ -14,7 +14,7 @@ services:
     image: nginx:alpine
     container_name: meta_frontend_ui
     ports:
-      - "3000:80" # Frontend accesible en el puerto 3000 del host
+      - "80" # Frontend accesible en el puerto 3000 del host
     volumes:
       - ./index.html:/usr/share/nginx/html/index.html
       - ./App.jsx:/usr/share/nginx/html/App.jsx
