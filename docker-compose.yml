@@ -17,5 +17,5 @@ services:
       - "80" # Frontend accesible en el puerto 3000 del host
     volumes:
       - ./index.html:/usr/share/nginx/html/index.html
-      - ./app.jsx:/usr/share/nginx/html/App.jsx
+      - ./app.jsx:/usr/share/nginx/html/app.jsx
     restart: always
