@@ -92,7 +92,12 @@ const App = () => {
         }
     }, []);
 
-    useEffect(() => { fetchData(); }, [fetchData]);
+    useEffect(() => {
+        fetchData();
+        // Ocultar loader cuando el componente se monta
+        const loader = document.getElementById('loader');
+        if (loader) loader.style.display = 'none';
+    }, [fetchData]);
 
     const handleToggle = (id) => {
         setSelected(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -192,4 +197,6 @@ const App = () => {
     );
 };
 
-export default App;
+// Renderizado final para React 18 Standalone
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
