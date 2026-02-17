@@ -1,7 +1,7 @@
 /**
  * MODULO: app.jsx
- * SISTEMA: Control Meta Pro v3.6 (Sesión Persistente, Auto-Sync y Configuración de Turnos)
- * DESCRIPCIÓN: Implementación de polling automático, logout, persistencia de auditor y configurador de horarios.
+ * SISTEMA: Control Meta Pro v3.7 (Optimistic UI Edition)
+ * DESCRIPCIÓN: Implementación de actualizaciones instantáneas sin espera de DB.
  */
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
@@ -27,19 +27,25 @@ const EditableLimit = ({ id, initialValue, onSave }) => {
     const [val, setVal] = useState(initialValue);
     useEffect(() => { setVal(initialValue); }, [initialValue]);
 
+    const handleBlur = () => {
+        if (val !== initialValue) {
+            onSave(id, 'limit_perc', val);
+        }
+    };
+
     return (
         <input
             type="number"
             className="bg-black border border-white/10 w-16 p-2 rounded-lg text-center text-blue-500 font-black outline-none focus:border-blue-500 transition-all"
             value={val}
             onChange={(e) => setVal(e.target.value)}
-            onBlur={() => onSave(id, 'limit_perc', val)}
+            onBlur={handleBlur}
         />
     );
 };
 
 /**
- * COMPONENTE: Panel de Configuración de Turnos (Restaurado)
+ * COMPONENTE: Panel de Configuración de Turnos
  */
 const TurnConfigPanel = ({ turns, onUpdate }) => {
     if (!turns) return null;
@@ -108,7 +114,7 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
                 const json = await res.json();
                 setAuditors(json.auditors || []);
                 if (json.auditors?.length > 0) setSelectedAuditor(json.auditors[0]);
-            } catch (e) { setError("Error de conexión con Auditores."); }
+            } catch (e) { setError("Error de conexión."); }
         };
         fetchAuditors();
     }, [apiUrl]);
@@ -126,9 +132,9 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
                 localStorage.setItem('meta_auditor_session', selectedAuditor);
                 onLogin(selectedAuditor);
             } else {
-                setError("Usuario o contraseña incorrectos.");
+                setError("Credenciales incorrectas.");
             }
-        } catch (e) { setError("Error de red."); }
+        } catch (e) { setError("Fallo de autenticación."); }
         finally { setLoading(false); }
     };
 
@@ -139,7 +145,7 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
                     <Icon name="ShieldCheck" size={40} className="text-white" />
                 </div>
                 <h1 className="text-3xl font-black text-white italic uppercase tracking-tighter mb-2">Control Meta</h1>
-                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10 italic">Auditores Dashboard v3.6</p>
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10 italic">Auditores Dashboard v3.7</p>
 
                 <form onSubmit={handleLogin} className="space-y-6 text-left">
                     {error && <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl text-rose-500 text-[10px] font-black uppercase text-center">{error}</div>}
@@ -155,8 +161,8 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
                         className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none transition-all"
                         onChange={e => setPassword(e.target.value)}
                     />
-                    <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white transition-all shadow-xl disabled:opacity-50">
-                        {loading ? "Sincronizando..." : "Ingresar al Panel"}
+                    <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white transition-all shadow-xl">
+                        {loading ? "Verificando..." : "Entrar"}
                     </button>
                 </form>
             </div>
@@ -176,7 +182,7 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
     const [loading, setLoading] = useState(true);
     const [lastSync, setLastSync] = useState(new Date());
 
-    // --- SINCRONIZACIÓN ---
+    // --- SINCRONIZACIÓN (Base) ---
     const sync = useCallback(async (silent = false) => {
         if (!silent) setLoading(true);
         try {
@@ -192,58 +198,74 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
 
     useEffect(() => {
         sync();
-        const interval = setInterval(() => {
-            sync(true);
-        }, 300000);
+        const interval = setInterval(() => sync(true), 300000); // 5 min
         return () => clearInterval(interval);
     }, [sync]);
 
-    // --- ACCIONES SQL & META ---
-    const updateSQL = async (id, key, value) => {
-        try {
-            await fetch(`${apiUrl}/ads/settings/update`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, key, value: String(value) })
-            });
-            sync(true);
-        } catch (e) { console.error(e); }
+    /**
+     * ACCIONES OPTIMISTAS (No esperan al servidor para actualizar la UI)
+     */
+    const updateSQL = (id, key, value) => {
+        // 1. Actualización inmediata en la UI
+        setData(prev => prev.map(item =>
+            item.meta.id === id
+                ? { ...item, settings: { ...item.settings, [key]: (key === 'is_frozen' ? value : value) } }
+                : item
+        ));
+
+        // 2. Envío al servidor en segundo plano
+        fetch(`${apiUrl}/ads/settings/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, key, value: String(value) })
+        }).catch(err => console.error("Error persistiendo cambio:", err));
     };
 
-    const updateTurnConfig = async (name, field, value) => {
-        try {
-            const turn = turns[name];
-            const payload = { ...turn, [field.includes('hour') ? field : 'days']: value, name };
-            if (field.includes('hour')) payload[field] = parseFloat(value);
-
-            await fetch(`${apiUrl}/ads/turns/update`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            sync(true);
-        } catch (e) { console.error(e); }
-    };
-
-    const toggleStatusManual = async (id, currentStatus) => {
+    const toggleStatusManual = (id, currentStatus) => {
         const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-        try {
-            setLoading(true);
-            await fetch(`${apiUrl}/ads/settings/update_meta`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, status: nextStatus })
-            });
-            sync();
-        } catch (e) { console.error(e); }
+
+        // 1. Cambio visual instantáneo
+        setData(prev => prev.map(item =>
+            item.meta.id === id
+                ? { ...item, meta: { ...item.meta, status: nextStatus } }
+                : item
+        ));
+
+        // 2. Envío a Meta en segundo plano
+        fetch(`${apiUrl}/ads/settings/update_meta`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, status: nextStatus })
+        }).catch(err => console.error("Error en Meta:", err));
     };
 
-    const toggleAutomation = async () => {
-        try {
-            const res = await fetch(`${apiUrl}/ads/automation/toggle`, { method: 'POST' });
-            const json = await res.json();
-            setAutomationActive(json.is_active);
-        } catch (e) { console.error(e); }
+    const updateTurnConfig = (name, field, value) => {
+        // Actualización local rápida
+        setTurns(prev => ({
+            ...prev,
+            [name]: { ...prev[name], [field.includes('hour') ? field : 'days']: value }
+        }));
+
+        const turn = turns[name];
+        const payload = { ...turn, [field.includes('hour') ? field : 'days']: value, name };
+        if (field.includes('hour')) payload[field] = parseFloat(value);
+
+        fetch(`${apiUrl}/ads/turns/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).catch(err => console.error("Error en turnos:", err));
+    };
+
+    const toggleAutomation = () => {
+        const nextState = !automationActive;
+        setAutomationActive(nextState);
+
+        fetch(`${apiUrl}/ads/automation/toggle`, { method: 'POST' })
+            .catch(err => {
+                console.error(err);
+                setAutomationActive(!nextState); // Rollback si falla
+            });
     };
 
     // --- ORDENAMIENTO Y TOTALES ---
@@ -267,7 +289,7 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
     return (
         <div className="min-h-screen bg-[#020202] text-slate-100 p-4 lg:p-12 font-sans animate-in">
 
-            {/* HEADER: SUMATORIAS Y SWITCH MAESTRO */}
+            {/* HEADER */}
             <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 mb-10">
                 <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-2xl relative overflow-hidden">
                     <div className="relative z-10">
@@ -282,7 +304,6 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
                     >
                         <div className={`w-6 h-6 bg-white rounded-full transition-all ${automationActive ? 'translate-x-8' : 'translate-x-0'}`} />
                     </button>
-                    <div className={`absolute inset-0 opacity-5 ${automationActive ? 'bg-blue-600 animate-pulse' : 'bg-transparent'}`}></div>
                 </div>
 
                 <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
@@ -297,24 +318,23 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
 
                 <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-xl">
                     <div>
-                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Auditor: {userEmail}</p>
-                        <button onClick={onLogout} className="text-[9px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-widest flex items-center gap-1 transition-all">
-                            <Icon name="LogOut" size={10} /> Cerrar Sesión
+                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1 truncate max-w-[120px]">Auditor: {userEmail}</p>
+                        <button onClick={onLogout} className="text-[9px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-widest flex items-center gap-1">
+                            <Icon name="LogOut" size={10} /> Salir
                         </button>
                     </div>
                     <div className="flex flex-col items-end gap-2">
-                        <button onClick={() => sync()} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
+                        <button onClick={() => sync()} className="p-3 bg-white/5 rounded-xl hover:bg-white/10">
                             <Icon name="RefreshCw" className={loading ? "animate-spin" : ""} />
                         </button>
-                        <p className="text-[8px] text-slate-600 font-mono">Sync: {lastSync.toLocaleTimeString()}</p>
+                        <p className="text-[8px] text-slate-600 font-mono italic">Sync: {lastSync.toLocaleTimeString()}</p>
                     </div>
                 </div>
             </div>
 
-            {/* PANEL DE CONFIGURACIÓN DE TURNOS */}
             <TurnConfigPanel turns={turns} onUpdate={updateTurnConfig} />
 
-            {/* TABLA DE CONTROL SQL */}
+            {/* TABLA */}
             <div className="bg-[#0a0a0a] border border-white/5 rounded-[3rem] shadow-2xl overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
@@ -341,10 +361,10 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
                                 const isOverLimit = perc >= settings.limit_perc;
 
                                 return (
-                                    <tr key={meta.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors group">
+                                    <tr key={meta.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-all group">
                                         <td className="p-6">
                                             <div className="flex items-center gap-3">
-                                                <div className={`w-3 h-3 rounded-full ${meta.status === 'ACTIVE' ? 'bg-emerald-500 shadow-[0_0_12px_#10b981]' : 'bg-rose-500/30'}`} />
+                                                <div className={`w-3 h-3 rounded-full transition-all duration-300 ${meta.status === 'ACTIVE' ? 'bg-emerald-500 shadow-[0_0_12px_#10b981]' : 'bg-rose-500/30'}`} />
                                                 <span className="font-bold text-slate-500 uppercase text-[9px] tracking-widest">{meta.status}</span>
                                             </div>
                                         </td>
@@ -384,7 +404,7 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
                                         <td className="p-6 text-center">
                                             <button
                                                 onClick={() => updateSQL(meta.id, 'is_frozen', !settings.is_frozen)}
-                                                className={`p-3 rounded-xl transition-all ${settings.is_frozen ? 'bg-blue-600 text-white shadow-lg' : 'bg-white/5 text-slate-700 hover:text-white'}`}
+                                                className={`p-3 rounded-xl transition-all duration-200 ${settings.is_frozen ? 'bg-blue-600 text-white shadow-lg' : 'bg-white/5 text-slate-700 hover:text-white'}`}
                                             >
                                                 <Icon name={settings.is_frozen ? "Lock" : "Unlock"} size={16} />
                                             </button>
@@ -392,9 +412,9 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
                                         <td className="p-6 text-center">
                                             <button
                                                 onClick={() => toggleStatusManual(meta.id, meta.status)}
-                                                className={`w-11 h-6 rounded-full p-1 transition-all ${meta.status === 'ACTIVE' ? 'bg-blue-600' : 'bg-white/10'}`}
+                                                className={`w-11 h-6 rounded-full p-1 transition-all duration-300 ${meta.status === 'ACTIVE' ? 'bg-blue-600' : 'bg-white/10'}`}
                                             >
-                                                <div className={`w-4 h-4 bg-white rounded-full transition-all ${meta.status === 'ACTIVE' ? 'translate-x-5' : 'translate-x-0'}`} />
+                                                <div className={`w-4 h-4 bg-white rounded-full transition-all duration-300 ${meta.status === 'ACTIVE' ? 'translate-x-5' : 'translate-x-0'}`} />
                                             </button>
                                         </td>
                                     </tr>
