@@ -1,7 +1,7 @@
 /**
  * MODULO: app.jsx
- * SISTEMA: Control Meta Pro v3.6 (Sesión Persistente y Auto-Sync)
- * DESCRIPCIÓN: Implementación de polling automático, logout y persistencia de auditor.
+ * SISTEMA: Control Meta Pro v3.6 (Sesión Persistente, Auto-Sync y Configuración de Turnos)
+ * DESCRIPCIÓN: Implementación de polling automático, logout, persistencia de auditor y configurador de horarios.
  */
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
@@ -39,6 +39,57 @@ const EditableLimit = ({ id, initialValue, onSave }) => {
 };
 
 /**
+ * COMPONENTE: Panel de Configuración de Turnos (Restaurado)
+ */
+const TurnConfigPanel = ({ turns, onUpdate }) => {
+    if (!turns) return null;
+
+    return (
+        <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] mb-10 shadow-2xl">
+            <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-6 flex items-center gap-2">
+                <Icon name="Settings2" size={14} /> Configuración Global de Horarios
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {Object.keys(turns).map(key => (
+                    <div key={key} className="bg-black/40 p-6 rounded-3xl border border-white/5">
+                        <p className="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-wider">{key}</p>
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-slate-500">Inicio (H):</span>
+                                <input
+                                    type="number" step="0.5"
+                                    className="bg-transparent border-b border-white/10 w-12 text-right text-white outline-none focus:border-blue-500"
+                                    defaultValue={turns[key].start}
+                                    onBlur={(e) => onUpdate(key, 'start_hour', e.target.value)}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-slate-500">Fin (H):</span>
+                                <input
+                                    type="number" step="0.5"
+                                    className="bg-transparent border-b border-white/10 w-12 text-right text-white outline-none focus:border-blue-500"
+                                    defaultValue={turns[key].end}
+                                    onBlur={(e) => onUpdate(key, 'end_hour', e.target.value)}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-slate-500">Días:</span>
+                                <input
+                                    type="text"
+                                    className="bg-transparent border-b border-white/10 w-16 text-right text-blue-400 outline-none focus:border-blue-500"
+                                    defaultValue={turns[key].days}
+                                    onBlur={(e) => onUpdate(key, 'days', e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+/**
  * ====================================================================
  * MODULO: LOGIN SCREEN
  * ====================================================================
@@ -72,7 +123,6 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
                 body: JSON.stringify({ nombre: selectedAuditor, password })
             });
             if (res.ok) {
-                // Persistimos en localStorage
                 localStorage.setItem('meta_auditor_session', selectedAuditor);
                 onLogin(selectedAuditor);
             } else {
@@ -121,6 +171,7 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
  */
 const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
     const [data, setData] = useState([]);
+    const [turns, setTurns] = useState(null);
     const [automationActive, setAutomationActive] = useState(false);
     const [loading, setLoading] = useState(true);
     const [lastSync, setLastSync] = useState(new Date());
@@ -132,19 +183,18 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
             const res = await fetch(`${apiUrl}/ads/sync`);
             const json = await res.json();
             setData(json.adsets || []);
+            setTurns(json.turns);
             setAutomationActive(json.automation_active);
             setLastSync(new Date());
         } catch (e) { console.error("Sync error:", e); }
         finally { setLoading(false); }
     }, [apiUrl]);
 
-    // Efecto para carga inicial y POLLING automático (cada 5 min)
     useEffect(() => {
         sync();
         const interval = setInterval(() => {
-            console.log("Auto-syncing data...");
             sync(true);
-        }, 300000); // 300,000 ms = 5 minutos
+        }, 300000);
         return () => clearInterval(interval);
     }, [sync]);
 
@@ -160,11 +210,26 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
         } catch (e) { console.error(e); }
     };
 
+    const updateTurnConfig = async (name, field, value) => {
+        try {
+            const turn = turns[name];
+            const payload = { ...turn, [field.includes('hour') ? field : 'days']: value, name };
+            if (field.includes('hour')) payload[field] = parseFloat(value);
+
+            await fetch(`${apiUrl}/ads/turns/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            sync(true);
+        } catch (e) { console.error(e); }
+    };
+
     const toggleStatusManual = async (id, currentStatus) => {
         const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
         try {
             setLoading(true);
-            await fetch(`${apiUrl}/ads/settings/update_meta`, { // Endpoint para cambio inmediato en Meta
+            await fetch(`${apiUrl}/ads/settings/update_meta`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id, status: nextStatus })
@@ -245,6 +310,9 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
                     </div>
                 </div>
             </div>
+
+            {/* PANEL DE CONFIGURACIÓN DE TURNOS */}
+            <TurnConfigPanel turns={turns} onUpdate={updateTurnConfig} />
 
             {/* TABLA DE CONTROL SQL */}
             <div className="bg-[#0a0a0a] border border-white/5 rounded-[3rem] shadow-2xl overflow-hidden">
