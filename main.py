@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Librerías de Google Auth
+# Google Auth Libraries
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -23,16 +23,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- CONFIGURACIÓN DE BASE DE DATOS ---
+# --- DATABASE CONFIGURATION (SQLite -> Prepared for PostgreSQL) ---
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./meta_control.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# --- MODELOS SQL ---
+# --- SQL MODELS ---
 
 class AdSetSetting(Base):
-    """Configuraciones persistentes por AdSet"""
+    """Persistent configurations per AdSet (Turns, Limits, Frozen status)"""
     __tablename__ = "adset_settings"
     id = Column(String, primary_key=True, index=True)
     turno = Column(String, default="matutino")
@@ -40,21 +40,21 @@ class AdSetSetting(Base):
     is_frozen = Column(Boolean, default=False)
 
 class TurnConfig(Base):
-    """Configuración de horarios de turnos"""
+    """Global configuration for turn schedules"""
     __tablename__ = "turn_configs"
     name = Column(String, primary_key=True) # matutino, vespertino, fsemana
     start_hour = Column(Float)
     end_hour = Column(Float)
-    days = Column(String) # "L-V", "S", "D"
+    days = Column(String) # e.g., "L-V", "S", "D"
 
 class AutomationState(Base):
-    """Estado maestro de la automatización"""
+    """Master state for the automation engine"""
     __tablename__ = "automation_state"
     id = Column(Integer, primary_key=True, default=1)
     is_active = Column(Boolean, default=False)
 
 class DailyHistory(Base):
-    """Respaldo histórico (Corte 11 PM)"""
+    """Historical backup (11 PM Snapshot)"""
     __tablename__ = "daily_history"
     id = Column(Integer, primary_key=True, index=True)
     date = Column(DateTime, default=datetime.utcnow)
@@ -64,9 +64,10 @@ class DailyHistory(Base):
     results = Column(Integer)
     impressions = Column(Integer)
 
+# Create tables
 Base.metadata.create_all(bind=engine)
 
-# Inicializar turnos por defecto si no existen
+# Initialize default turns if they don't exist
 def init_db():
     db = SessionLocal()
     if not db.query(TurnConfig).first():
@@ -82,7 +83,7 @@ def init_db():
 init_db()
 
 # --- APP INIT ---
-app = FastAPI(title="Meta Control SQL Pro v3.5", version="3.5.0")
+app = FastAPI(title="Meta Control SQL Pro v3.6", version="3.6.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,7 +93,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- CONFIGURACIÓN DE SEGURIDAD (GOOGLE API) ---
+# --- GOOGLE API SECURITY CONFIGURATION ---
 def get_google_creds():
     creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
     if creds_b64:
@@ -101,6 +102,7 @@ def get_google_creds():
             creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
         )
     
+    # Fallback to individual variables
     info = {
         "type": os.environ.get("GOOGLE_TYPE"),
         "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
@@ -118,13 +120,23 @@ def get_google_creds():
     )
 
 SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
-RANGE_NAME = "Auditores!A:B"
+RANGE_NAME = "Auditores!A:B" # Assumes Col A: Nombre, Col B: Contraseña
 
 # --- META CONFIG ---
 ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
 AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
 API_VERSION = "v21.0"
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
+
+# Filter list migrated from AppScript
+ALLOWED_ADSET_IDS = [
+    "120238886501840717", "120238886472900717", "120238886429400717",
+    "120238886420220717", "120238886413960717", "120238886369210717",
+    "120234721717970717", "120234721717960717", "120234721717950717",
+    "120233618279570717", "120233618279540717", "120233611687810717",
+    "120232204774610717", "120232204774590717", "120232204774570717",
+    "120232157515490717", "120232157515480717", "120232157515460717"
+]
 
 # --- SCHEMAS ---
 class SettingUpdate(BaseModel):
@@ -142,8 +154,14 @@ class LoginRequest(BaseModel):
     nombre: str
     password: str
 
-# --- LÓGICA DE AUDITORES ---
+class StatusChangeRequest(BaseModel):
+    id: str
+    status: str
+
+# --- AUTH LOGIC (GOOGLE SHEETS) ---
+
 async def get_auditors_from_api():
+    """Connects to Google Sheets API using Service Account"""
     try:
         creds = get_google_creds()
         service = build('sheets', 'v4', credentials=creds)
@@ -151,14 +169,14 @@ async def get_auditors_from_api():
         result = sheet.values().get(spreadsheetId=SHEET_ID, range=RANGE_NAME).execute()
         values = result.get('values', [])
         if not values: return []
-        headers = values[0]
+        headers = values[0] # [Nombre, Contraseña]
         data = []
         for row in values[1:]:
             if len(row) >= 2:
                 data.append({headers[0]: row[0], headers[1]: row[1]})
         return data
     except Exception as e:
-        print(f"Error en Google API: {e}")
+        print(f"Google API Error: {e}")
         return []
 
 @app.get("/auth/auditors")
@@ -175,21 +193,25 @@ async def login(req: LoginRequest):
             return {"status": "success", "user": req.nombre}
     raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
 
-# --- LÓGICA DE NEGOCIO ---
+# --- BUSINESS LOGIC (META & SQL) ---
+
 @app.get("/ads/sync")
 async def sync_data():
+    """Syncs Meta data with SQL settings and Turn configurations"""
     db = SessionLocal()
     try:
+        # 1. Automation master state
         auto = db.query(AutomationState).first()
         if not auto:
             auto = AutomationState(id=1, is_active=False)
             db.add(auto)
             db.commit()
 
-        # Obtener configuraciones de turnos
+        # 2. Global turn schedules
         turns = db.query(TurnConfig).all()
         turn_data = {t.name: {"start": t.start_hour, "end": t.end_hour, "days": t.days} for t in turns}
 
+        # 3. Meta API Call
         fields = "id,name,status,daily_budget,bid_amount,insights.date_preset(today){spend,actions,impressions,cpc,ctr}"
         async with httpx.AsyncClient() as client:
             res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
@@ -197,8 +219,12 @@ async def sync_data():
             })
             meta_adsets = res.json().get("data", [])
 
+        # 4. Merge with SQL settings and filter by ALLOWED_ADSET_IDS
         results = []
         for ad in meta_adsets:
+            if str(ad['id']) not in ALLOWED_ADSET_IDS:
+                continue
+                
             setting = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
             if not setting:
                 setting = AdSetSetting(id=ad['id'])
@@ -240,17 +266,36 @@ async def update_turn(req: TurnUpdate):
 
 @app.post("/ads/settings/update")
 async def update_db_setting(req: SettingUpdate):
+    """Updates local SQL settings (Turn, Limit, Frozen)"""
     db = SessionLocal()
     try:
         setting = db.query(AdSetSetting).filter(AdSetSetting.id == req.id).first()
         if not setting: raise HTTPException(status_code=404)
+        
         if req.key == "turno": setting.turno = req.value
         elif req.key == "limit_perc": setting.limit_perc = float(req.value)
         elif req.key == "is_frozen": setting.is_frozen = (req.value.lower() == 'true')
+        
         db.commit()
         return {"status": "updated"}
     finally:
         db.close()
+
+@app.post("/ads/settings/update_meta")
+async def update_meta_status_immediate(req: StatusChangeRequest):
+    """Updates status directly on Meta API (Manual Switch)"""
+    async with httpx.AsyncClient() as client:
+        try:
+            url = f"{BASE_URL}/{req.id}"
+            response = await client.post(url, params={
+                "status": req.status,
+                "access_token": ACCESS_TOKEN
+            })
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail="Error Meta API")
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/ads/automation/toggle")
 async def toggle_automation():
@@ -265,6 +310,7 @@ async def toggle_automation():
 
 @app.post("/ads/backup/daily")
 async def trigger_nightly_backup(background_tasks: BackgroundTasks):
+    """Snapshot for historical backup at 11 PM"""
     async def run_backup():
         db = SessionLocal()
         fields = "id,name,insights.date_preset(today){spend,actions,impressions}"
@@ -285,5 +331,6 @@ async def trigger_nightly_backup(background_tasks: BackgroundTasks):
                 db.add(history)
             db.commit()
         db.close()
+
     background_tasks.add_task(run_backup)
     return {"status": "Backup task started"}
