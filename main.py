@@ -4,6 +4,7 @@ import httpx
 import base64
 import json
 import pytz
+import csv
 from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -22,26 +23,38 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- CONFIGURACIÓN DE BASE DE DATOS (SQLite -> PostgreSQL) ---
+# --- CONFIGURACIÓN DE BASE DE DATOS ---
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./meta_control.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # --- MODELOS SQL ---
+
 class AdSetSetting(Base):
+    """Configuraciones persistentes por AdSet"""
     __tablename__ = "adset_settings"
     id = Column(String, primary_key=True, index=True)
     turno = Column(String, default="matutino")
     limit_perc = Column(Float, default=50.0)
     is_frozen = Column(Boolean, default=False)
 
+class TurnConfig(Base):
+    """Configuración de horarios de turnos"""
+    __tablename__ = "turn_configs"
+    name = Column(String, primary_key=True) # matutino, vespertino, fsemana
+    start_hour = Column(Float)
+    end_hour = Column(Float)
+    days = Column(String) # "L-V", "S", "D"
+
 class AutomationState(Base):
+    """Estado maestro de la automatización"""
     __tablename__ = "automation_state"
     id = Column(Integer, primary_key=True, default=1)
     is_active = Column(Boolean, default=False)
 
 class DailyHistory(Base):
+    """Respaldo histórico (Corte 11 PM)"""
     __tablename__ = "daily_history"
     id = Column(Integer, primary_key=True, index=True)
     date = Column(DateTime, default=datetime.utcnow)
@@ -53,8 +66,23 @@ class DailyHistory(Base):
 
 Base.metadata.create_all(bind=engine)
 
+# Inicializar turnos por defecto si no existen
+def init_db():
+    db = SessionLocal()
+    if not db.query(TurnConfig).first():
+        defaults = [
+            TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
+            TurnConfig(name="vespertino", start_hour=13.0, end_hour=20.5, days="L-V"),
+            TurnConfig(name="fsemana", start_hour=8.0, end_hour=14.0, days="S")
+        ]
+        db.add_all(defaults)
+        db.commit()
+    db.close()
+
+init_db()
+
 # --- APP INIT ---
-app = FastAPI(title="Meta Control SQL Pro v3.4", version="3.4.0")
+app = FastAPI(title="Meta Control SQL Pro v3.5", version="3.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,7 +93,6 @@ app.add_middleware(
 )
 
 # --- CONFIGURACIÓN DE SEGURIDAD (GOOGLE API) ---
-# Intentamos cargar credenciales desde el Base64 que mencionas
 def get_google_creds():
     creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
     if creds_b64:
@@ -73,7 +100,7 @@ def get_google_creds():
         return service_account.Credentials.from_service_account_info(
             creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
         )
-    # Fallback a variables individuales si no hay base64
+    
     info = {
         "type": os.environ.get("GOOGLE_TYPE"),
         "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
@@ -91,7 +118,7 @@ def get_google_creds():
     )
 
 SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
-RANGE_NAME = "Auditores!A:B" # Asumiendo que A es Nombre y B es Contraseña
+RANGE_NAME = "Auditores!A:B"
 
 # --- META CONFIG ---
 ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
@@ -105,33 +132,33 @@ class SettingUpdate(BaseModel):
     key: str
     value: str
 
+class TurnUpdate(BaseModel):
+    name: str
+    start_hour: float
+    end_hour: float
+    days: str
+
 class LoginRequest(BaseModel):
     nombre: str
     password: str
 
-# --- LÓGICA DE AUDITORES (MODULO GOOGLE API) ---
-
+# --- LÓGICA DE AUDITORES ---
 async def get_auditors_from_api():
-    """Conecta con la API de Google Sheets usando Service Account"""
     try:
         creds = get_google_creds()
         service = build('sheets', 'v4', credentials=creds)
         sheet = service.spreadsheets()
         result = sheet.values().get(spreadsheetId=SHEET_ID, range=RANGE_NAME).execute()
         values = result.get('values', [])
-
-        if not values:
-            return []
-
-        # Convertir filas en lista de diccionarios
-        headers = values[0] # [Nombre, Contraseña]
+        if not values: return []
+        headers = values[0]
         data = []
         for row in values[1:]:
             if len(row) >= 2:
                 data.append({headers[0]: row[0], headers[1]: row[1]})
         return data
     except Exception as e:
-        print(f"Error crítico en Google API: {e}")
+        print(f"Error en Google API: {e}")
         return []
 
 @app.get("/auth/auditors")
@@ -148,8 +175,7 @@ async def login(req: LoginRequest):
             return {"status": "success", "user": req.nombre}
     raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
 
-# --- LÓGICA DE NEGOCIO (META & SQL) ---
-
+# --- LÓGICA DE NEGOCIO ---
 @app.get("/ads/sync")
 async def sync_data():
     db = SessionLocal()
@@ -159,6 +185,10 @@ async def sync_data():
             auto = AutomationState(id=1, is_active=False)
             db.add(auto)
             db.commit()
+
+        # Obtener configuraciones de turnos
+        turns = db.query(TurnConfig).all()
+        turn_data = {t.name: {"start": t.start_hour, "end": t.end_hour, "days": t.days} for t in turns}
 
         fields = "id,name,status,daily_budget,bid_amount,insights.date_preset(today){spend,actions,impressions,cpc,ctr}"
         async with httpx.AsyncClient() as client:
@@ -184,11 +214,27 @@ async def sync_data():
                 }
             })
 
+        mexico_tz = pytz.timezone('America/Mexico_City')
         return {
             "adsets": results,
+            "turns": turn_data,
             "automation_active": auto.is_active,
-            "server_time": datetime.now(pytz.timezone('America/Mexico_City')).isoformat()
+            "server_time": datetime.now(mexico_tz).isoformat()
         }
+    finally:
+        db.close()
+
+@app.post("/ads/turns/update")
+async def update_turn(req: TurnUpdate):
+    db = SessionLocal()
+    try:
+        turn = db.query(TurnConfig).filter(TurnConfig.name == req.name).first()
+        if not turn: raise HTTPException(status_code=404)
+        turn.start_hour = req.start_hour
+        turn.end_hour = req.end_hour
+        turn.days = req.days
+        db.commit()
+        return {"status": "updated"}
     finally:
         db.close()
 
@@ -198,11 +244,9 @@ async def update_db_setting(req: SettingUpdate):
     try:
         setting = db.query(AdSetSetting).filter(AdSetSetting.id == req.id).first()
         if not setting: raise HTTPException(status_code=404)
-        
         if req.key == "turno": setting.turno = req.value
         elif req.key == "limit_perc": setting.limit_perc = float(req.value)
-        elif req.key == "is_frozen": setting.is_frozen = req.value.lower() == 'true'
-        
+        elif req.key == "is_frozen": setting.is_frozen = (req.value.lower() == 'true')
         db.commit()
         return {"status": "updated"}
     finally:
@@ -241,6 +285,5 @@ async def trigger_nightly_backup(background_tasks: BackgroundTasks):
                 db.add(history)
             db.commit()
         db.close()
-
     background_tasks.add_task(run_backup)
     return {"status": "Backup task started"}

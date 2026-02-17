@@ -1,7 +1,7 @@
 /**
  * MODULO: app.jsx
- * SISTEMA: Control Meta Pro v3.3 (Auth via Google Sheets)
- * DESCRIPCIÓN: Login con desplegable de usuarios y validación de contraseña.
+ * SISTEMA: Control Meta Pro v3.5 (Edición Optimizada)
+ * DESCRIPCIÓN: Implementación con configuración de turnos detallada y ordenamiento dinámico.
  */
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
@@ -21,8 +21,79 @@ const Icon = ({ name, size = 16, className = "" }) => {
 };
 
 /**
+ * COMPONENTE: Celda Editable (Evita lentitud en inputs)
+ */
+const EditableLimit = ({ id, initialValue, onSave }) => {
+    const [val, setVal] = useState(initialValue);
+
+    // Sincronizar si el valor cambia externamente (ej. por sync)
+    useEffect(() => { setVal(initialValue); }, [initialValue]);
+
+    return (
+        <input
+            type="number"
+            className="bg-black border border-white/10 w-16 p-2 rounded-lg text-center text-blue-500 font-black outline-none focus:border-blue-500 transition-all"
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            onBlur={() => onSave(id, 'limit_perc', val)}
+        />
+    );
+};
+
+/**
+ * COMPONENTE: Panel de Configuración de Turnos
+ */
+const TurnConfigPanel = ({ turns, onUpdate }) => {
+    if (!turns) return null;
+
+    return (
+        <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] mb-10 shadow-2xl">
+            <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-6 flex items-center gap-2">
+                <Icon name="Settings2" size={14} /> Configuración Global de Horarios
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {Object.keys(turns).map(key => (
+                    <div key={key} className="bg-black/40 p-6 rounded-3xl border border-white/5">
+                        <p className="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-wider">{key}</p>
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-slate-500">Inicio (H):</span>
+                                <input
+                                    type="number" step="0.5"
+                                    className="bg-transparent border-b border-white/10 w-12 text-right text-white outline-none focus:border-blue-500"
+                                    defaultValue={turns[key].start}
+                                    onBlur={(e) => onUpdate(key, 'start_hour', e.target.value)}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-slate-500">Fin (H):</span>
+                                <input
+                                    type="number" step="0.5"
+                                    className="bg-transparent border-b border-white/10 w-12 text-right text-white outline-none focus:border-blue-500"
+                                    defaultValue={turns[key].end}
+                                    onBlur={(e) => onUpdate(key, 'end_hour', e.target.value)}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-slate-500">Días:</span>
+                                <input
+                                    type="text"
+                                    className="bg-transparent border-b border-white/10 w-16 text-right text-blue-400 outline-none focus:border-blue-500"
+                                    defaultValue={turns[key].days}
+                                    onBlur={(e) => onUpdate(key, 'days', e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+/**
  * ====================================================================
- * MODULO: LOGIN SCREEN (Auth Auditores)
+ * MODULO: LOGIN SCREEN
  * ====================================================================
  */
 const LoginScreen = ({ onLogin, apiUrl }) => {
@@ -32,7 +103,6 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
-    // Cargar lista de auditores al montar
     useEffect(() => {
         const fetchAuditors = async () => {
             try {
@@ -40,9 +110,7 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
                 const json = await res.json();
                 setAuditors(json.auditors || []);
                 if (json.auditors?.length > 0) setSelectedAuditor(json.auditors[0]);
-            } catch (e) {
-                setError("No se pudo conectar con el servidor de autenticación.");
-            }
+            } catch (e) { setError("Fallo al conectar con Auditores."); }
         };
         fetchAuditors();
     }, [apiUrl]);
@@ -50,26 +118,16 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
-        setError("");
-
         try {
             const res = await fetch(`${apiUrl}/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ nombre: selectedAuditor, password })
             });
-
-            if (res.ok) {
-                onLogin(selectedAuditor);
-            } else {
-                const json = await res.json();
-                setError(json.detail || "Error al iniciar sesión.");
-            }
-        } catch (e) {
-            setError("Error de red. Intenta más tarde.");
-        } finally {
-            setLoading(false);
-        }
+            if (res.ok) onLogin(selectedAuditor);
+            else setError("Credenciales incorrectas");
+        } catch (e) { setError("Error de conexión"); }
+        finally { setLoading(false); }
     };
 
     return (
@@ -79,43 +137,14 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
                     <Icon name="ShieldCheck" size={40} className="text-white" />
                 </div>
                 <h1 className="text-3xl font-black text-white italic uppercase tracking-tighter mb-2">Control Meta</h1>
-                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10 italic">Auditores Dashboard v3.3</p>
-
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10">Auditores Panel v3.5</p>
                 <form onSubmit={handleLogin} className="space-y-6 text-left">
-                    {error && (
-                        <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl text-rose-500 text-[10px] font-black uppercase text-center">
-                            {error}
-                        </div>
-                    )}
-
-                    <div>
-                        <label className="text-[10px] font-black text-slate-500 uppercase ml-4 mb-2 block tracking-widest">Seleccionar Auditor</label>
-                        <select
-                            className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none transition-all appearance-none cursor-pointer"
-                            value={selectedAuditor}
-                            onChange={e => setSelectedAuditor(e.target.value)}
-                        >
-                            {auditors.map(name => (
-                                <option key={name} value={name}>{name}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    <div>
-                        <label className="text-[10px] font-black text-slate-500 uppercase ml-4 mb-2 block tracking-widest">Contraseña</label>
-                        <input
-                            type="password" required placeholder="••••••••"
-                            className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none transition-all"
-                            onChange={e => setPassword(e.target.value)}
-                        />
-                    </div>
-
-                    <button
-                        disabled={loading}
-                        className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white transition-all shadow-xl disabled:opacity-50"
-                    >
-                        {loading ? "Verificando..." : "Ingresar al Panel"}
-                    </button>
+                    {error && <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl text-rose-500 text-[10px] font-black uppercase text-center">{error}</div>}
+                    <select className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white outline-none appearance-none" value={selectedAuditor} onChange={e => setSelectedAuditor(e.target.value)}>
+                        {auditors.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <input type="password" required placeholder="Contraseña" className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none" onChange={e => setPassword(e.target.value)} />
+                    <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white transition-all shadow-xl">{loading ? "Verificando..." : "Entrar"}</button>
                 </form>
             </div>
         </div>
@@ -128,7 +157,8 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
  * ====================================================================
  */
 const Dashboard = ({ userEmail, apiUrl }) => {
-    const [data, setData] = useState([]);
+    const [rawItems, setRawItems] = useState([]);
+    const [turns, setTurns] = useState(null);
     const [automationActive, setAutomationActive] = useState(false);
     const [loading, setLoading] = useState(true);
 
@@ -137,7 +167,8 @@ const Dashboard = ({ userEmail, apiUrl }) => {
         try {
             const res = await fetch(`${apiUrl}/ads/sync`);
             const json = await res.json();
-            setData(json.adsets || []);
+            setRawItems(json.adsets || []);
+            setTurns(json.turns);
             setAutomationActive(json.automation_active);
         } catch (e) { console.error(e); }
         finally { setLoading(false); }
@@ -145,12 +176,37 @@ const Dashboard = ({ userEmail, apiUrl }) => {
 
     useEffect(() => { sync(); }, [sync]);
 
+    // Ordenar Dinámicamente: Activos primero
+    const sortedData = useMemo(() => {
+        return [...rawItems].sort((a, b) => {
+            if (a.meta.status === 'ACTIVE' && b.meta.status !== 'ACTIVE') return -1;
+            if (a.meta.status !== 'ACTIVE' && b.meta.status === 'ACTIVE') return 1;
+            return 0;
+        });
+    }, [rawItems]);
+
     const updateSQL = async (id, key, value) => {
         try {
             await fetch(`${apiUrl}/ads/settings/update`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id, key, value: String(value) })
+            });
+            // No llamamos a sync() inmediatamente para evitar lag visual si es una celda editable
+        } catch (e) { console.error(e); }
+    };
+
+    const updateTurnConfig = async (name, field, value) => {
+        try {
+            const turn = turns[name];
+            const payload = { ...turn, [field.includes('hour') ? field : 'days']: value, name };
+            // Ajuste si el field es start_hour o end_hour para asegurar float
+            if (field.includes('hour')) payload[field] = parseFloat(value);
+
+            await fetch(`${apiUrl}/ads/turns/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
             });
             sync();
         } catch (e) { console.error(e); }
@@ -165,16 +221,17 @@ const Dashboard = ({ userEmail, apiUrl }) => {
     };
 
     const totals = useMemo(() => {
-        return data.reduce((acc, curr) => {
+        return sortedData.reduce((acc, curr) => {
             const ins = curr.meta.insights?.data?.[0] || {};
             acc.spend += parseFloat(ins.spend || 0);
             acc.results += parseInt(ins.actions?.[0]?.value || 0);
             return acc;
         }, { spend: 0, results: 0 });
-    }, [data]);
+    }, [sortedData]);
 
     return (
         <div className="min-h-screen bg-[#020202] text-slate-100 p-4 lg:p-12 font-sans">
+
             {/* HEADER SUPERIOR */}
             <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 mb-10">
                 <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-2xl">
@@ -202,13 +259,16 @@ const Dashboard = ({ userEmail, apiUrl }) => {
                 <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between">
                     <div>
                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Auditor</p>
-                        <p className="text-xs font-bold text-white truncate max-w-[140px]">{userEmail}</p>
+                        <p className="text-xs font-bold text-white truncate max-w-[140px] uppercase">{userEmail}</p>
                     </div>
                     <button onClick={sync} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
                         <Icon name="RefreshCw" className={loading ? "animate-spin" : ""} />
                     </button>
                 </div>
             </div>
+
+            {/* PANEL DE CONFIGURACIÓN DE TURNOS */}
+            <TurnConfigPanel turns={turns} onUpdate={updateTurnConfig} />
 
             {/* TABLA DE ADSETS */}
             <div className="bg-[#0a0a0a] border border-white/5 rounded-[3rem] shadow-2xl overflow-hidden">
@@ -227,7 +287,7 @@ const Dashboard = ({ userEmail, apiUrl }) => {
                             </tr>
                         </thead>
                         <tbody className="text-xs">
-                            {data.map(item => {
+                            {sortedData.map(item => {
                                 const { meta, settings } = item;
                                 const ins = meta.insights?.data?.[0] || {};
                                 const ppto = (parseFloat(meta.daily_budget || 0) / 100);
@@ -236,16 +296,16 @@ const Dashboard = ({ userEmail, apiUrl }) => {
                                 const isOverLimit = perc >= settings.limit_perc;
 
                                 return (
-                                    <tr key={meta.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors group">
+                                    <tr key={meta.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-all group">
                                         <td className="p-6">
                                             <div className="flex items-center gap-3">
                                                 <div className={`w-3 h-3 rounded-full ${meta.status === 'ACTIVE' ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)]' : 'bg-rose-500/30'}`} />
-                                                <span className="font-bold text-slate-500 uppercase text-[9px] tracking-widest">{meta.status}</span>
+                                                <span className="font-black text-slate-500 uppercase text-[8px] tracking-widest">{meta.status}</span>
                                             </div>
                                         </td>
                                         <td className="p-6 max-w-[220px]">
                                             <p className="font-bold text-white uppercase truncate tracking-tight group-hover:text-blue-400 transition-colors">{meta.name}</p>
-                                            <p className="text-[9px] text-slate-600 font-mono mt-1">ID: {meta.id}</p>
+                                            <p className="text-[9px] text-slate-600 font-mono mt-1 italic">ID: {meta.id}</p>
                                         </td>
                                         <td className="p-6 text-center font-bold text-slate-300">
                                             ${ppto.toFixed(2)}
@@ -256,15 +316,11 @@ const Dashboard = ({ userEmail, apiUrl }) => {
                                             </div>
                                         </td>
                                         <td className="p-6 text-center">
-                                            <div className="flex items-center justify-center gap-2">
-                                                <input
-                                                    type="number"
-                                                    className="bg-black border border-white/10 w-16 p-2 rounded-lg text-center text-blue-500 font-black focus:border-blue-500 outline-none transition-all"
-                                                    value={settings.limit_perc}
-                                                    onChange={(e) => updateSQL(meta.id, 'limit_perc', e.target.value)}
-                                                />
-                                                <span className="text-[10px] font-black text-slate-500">%</span>
-                                            </div>
+                                            <EditableLimit
+                                                id={meta.id}
+                                                initialValue={settings.limit_perc}
+                                                onSave={updateSQL}
+                                            />
                                         </td>
                                         <td className="p-6 text-center font-black text-white text-base">
                                             {ins.actions?.[0]?.value || 0}
