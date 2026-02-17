@@ -1,7 +1,7 @@
 /**
  * MODULO: app.jsx
- * SISTEMA: Control Meta Pro v3.2 (Edición SQL)
- * DESCRIPCIÓN: Implementación con Automation Switch, Stop-Loss % y gestión tabular.
+ * SISTEMA: Control Meta Pro v3.3 (Auth via Google Sheets)
+ * DESCRIPCIÓN: Login con desplegable de usuarios y validación de contraseña.
  */
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
@@ -22,35 +22,99 @@ const Icon = ({ name, size = 16, className = "" }) => {
 
 /**
  * ====================================================================
- * COMPONENTE: LOGIN SCREEN
+ * MODULO: LOGIN SCREEN (Auth Auditores)
  * ====================================================================
  */
-const LoginScreen = ({ onLogin }) => {
-    const [email, setEmail] = useState("");
+const LoginScreen = ({ onLogin, apiUrl }) => {
+    const [auditors, setAuditors] = useState([]);
+    const [selectedAuditor, setSelectedAuditor] = useState("");
+    const [password, setPassword] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
 
-    const handleLogin = (e) => {
+    // Cargar lista de auditores al montar
+    useEffect(() => {
+        const fetchAuditors = async () => {
+            try {
+                const res = await fetch(`${apiUrl}/auth/auditors`);
+                const json = await res.json();
+                setAuditors(json.auditors || []);
+                if (json.auditors?.length > 0) setSelectedAuditor(json.auditors[0]);
+            } catch (e) {
+                setError("No se pudo conectar con el servidor de autenticación.");
+            }
+        };
+        fetchAuditors();
+    }, [apiUrl]);
+
+    const handleLogin = async (e) => {
         e.preventDefault();
-        if (email.includes("@")) onLogin(email);
-        else alert("Por favor ingresa un correo válido.");
+        setLoading(true);
+        setError("");
+
+        try {
+            const res = await fetch(`${apiUrl}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nombre: selectedAuditor, password })
+            });
+
+            if (res.ok) {
+                onLogin(selectedAuditor);
+            } else {
+                const json = await res.json();
+                setError(json.detail || "Error al iniciar sesión.");
+            }
+        } catch (e) {
+            setError("Error de red. Intenta más tarde.");
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
         <div className="min-h-screen bg-[#020202] flex items-center justify-center p-6">
             <div className="w-full max-w-md bg-[#0a0a0a] border border-white/5 p-12 rounded-[3rem] shadow-2xl text-center">
-                <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-blue-900/40 shadow-2xl animate-pulse">
+                <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-blue-900/40 shadow-2xl">
                     <Icon name="ShieldCheck" size={40} className="text-white" />
                 </div>
                 <h1 className="text-3xl font-black text-white italic uppercase tracking-tighter mb-2">Control Meta</h1>
-                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10 italic">Auditores Panel v3.2 (SQL)</p>
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10 italic">Auditores Dashboard v3.3</p>
 
-                <form onSubmit={handleLogin} className="space-y-4 text-left">
-                    <input
-                        type="email" required placeholder="Correo de Auditor"
-                        className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none transition-all"
-                        onChange={e => setEmail(e.target.value)}
-                    />
-                    <button className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white transition-all shadow-xl">
-                        Sincronizar Acceso
+                <form onSubmit={handleLogin} className="space-y-6 text-left">
+                    {error && (
+                        <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl text-rose-500 text-[10px] font-black uppercase text-center">
+                            {error}
+                        </div>
+                    )}
+
+                    <div>
+                        <label className="text-[10px] font-black text-slate-500 uppercase ml-4 mb-2 block tracking-widest">Seleccionar Auditor</label>
+                        <select
+                            className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none transition-all appearance-none cursor-pointer"
+                            value={selectedAuditor}
+                            onChange={e => setSelectedAuditor(e.target.value)}
+                        >
+                            {auditors.map(name => (
+                                <option key={name} value={name}>{name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="text-[10px] font-black text-slate-500 uppercase ml-4 mb-2 block tracking-widest">Contraseña</label>
+                        <input
+                            type="password" required placeholder="••••••••"
+                            className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none transition-all"
+                            onChange={e => setPassword(e.target.value)}
+                        />
+                    </div>
+
+                    <button
+                        disabled={loading}
+                        className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white transition-all shadow-xl disabled:opacity-50"
+                    >
+                        {loading ? "Verificando..." : "Ingresar al Panel"}
                     </button>
                 </form>
             </div>
@@ -60,33 +124,30 @@ const LoginScreen = ({ onLogin }) => {
 
 /**
  * ====================================================================
- * COMPONENTE: DASHBOARD PRINCIPAL
+ * MODULO: DASHBOARD PRINCIPAL
  * ====================================================================
  */
-const Dashboard = ({ userEmail }) => {
+const Dashboard = ({ userEmail, apiUrl }) => {
     const [data, setData] = useState([]);
     const [automationActive, setAutomationActive] = useState(false);
     const [loading, setLoading] = useState(true);
-    const API_URL = "https://manejoapi.libresdeumas.com";
 
-    // --- SINCRONIZACIÓN ---
     const sync = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_URL}/ads/sync`);
+            const res = await fetch(`${apiUrl}/ads/sync`);
             const json = await res.json();
             setData(json.adsets || []);
             setAutomationActive(json.automation_active);
         } catch (e) { console.error(e); }
         finally { setLoading(false); }
-    }, []);
+    }, [apiUrl]);
 
     useEffect(() => { sync(); }, [sync]);
 
-    // --- ACCIONES SQL ---
     const updateSQL = async (id, key, value) => {
         try {
-            await fetch(`${API_URL}/ads/settings/update`, {
+            await fetch(`${apiUrl}/ads/settings/update`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id, key, value: String(value) })
@@ -97,13 +158,12 @@ const Dashboard = ({ userEmail }) => {
 
     const toggleAutomation = async () => {
         try {
-            const res = await fetch(`${API_URL}/ads/automation/toggle`, { method: 'POST' });
+            const res = await fetch(`${apiUrl}/ads/automation/toggle`, { method: 'POST' });
             const json = await res.json();
             setAutomationActive(json.is_active);
         } catch (e) { console.error(e); }
     };
 
-    // --- CÁLCULOS TOTALES ---
     const totals = useMemo(() => {
         return data.reduce((acc, curr) => {
             const ins = curr.meta.insights?.data?.[0] || {};
@@ -114,13 +174,14 @@ const Dashboard = ({ userEmail }) => {
     }, [data]);
 
     return (
-        <div className="min-h-screen bg-[#020202] text-slate-100 p-4 lg:p-12">
-
-            {/* HEADER: SUMATORIAS Y SWITCH MAESTRO */}
+        <div className="min-h-screen bg-[#020202] text-slate-100 p-4 lg:p-12 font-sans">
+            {/* HEADER SUPERIOR */}
             <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 mb-10">
                 <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-2xl">
                     <div>
-                        <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">Automatización</h3>
+                        <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1 flex items-center gap-2">
+                            <Icon name="Cpu" size={12} /> Automatización
+                        </h3>
                         <p className="text-xl font-black">{automationActive ? "ACTIVA" : "APAGADA"}</p>
                     </div>
                     <button
@@ -130,26 +191,26 @@ const Dashboard = ({ userEmail }) => {
                         <div className={`w-6 h-6 bg-white rounded-full transition-all ${automationActive ? 'translate-x-8' : 'translate-x-0'}`} />
                     </button>
                 </div>
-                <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem]">
+                <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Inversión Hoy</p>
-                    <p className="text-2xl font-black">${totals.spend.toFixed(2)}</p>
+                    <p className="text-2xl font-black text-white">${totals.spend.toFixed(2)}</p>
                 </div>
-                <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem]">
+                <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Resultados</p>
-                    <p className="text-2xl font-black">{totals.results}</p>
+                    <p className="text-2xl font-black text-white">{totals.results}</p>
                 </div>
                 <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between">
                     <div>
                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Auditor</p>
-                        <p className="text-xs font-bold truncate max-w-[140px]">{userEmail}</p>
+                        <p className="text-xs font-bold text-white truncate max-w-[140px]">{userEmail}</p>
                     </div>
-                    <button onClick={sync} className="p-3 bg-white/5 rounded-xl hover:bg-white/10">
+                    <button onClick={sync} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
                         <Icon name="RefreshCw" className={loading ? "animate-spin" : ""} />
                     </button>
                 </div>
             </div>
 
-            {/* TABLA DE CONTROL SQL */}
+            {/* TABLA DE ADSETS */}
             <div className="bg-[#0a0a0a] border border-white/5 rounded-[3rem] shadow-2xl overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
@@ -157,7 +218,7 @@ const Dashboard = ({ userEmail }) => {
                             <tr className="bg-black/50 text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] border-b border-white/5">
                                 <th className="p-6">Estado</th>
                                 <th className="p-6">AdSet</th>
-                                <th className="p-6 text-center">Presupuesto</th>
+                                <th className="p-6 text-center">Ppto Diario</th>
                                 <th className="p-6 text-center">Gasto Hoy</th>
                                 <th className="p-6 text-center text-blue-500">Stop-Loss %</th>
                                 <th className="p-6 text-center">Result.</th>
@@ -175,47 +236,54 @@ const Dashboard = ({ userEmail }) => {
                                 const isOverLimit = perc >= settings.limit_perc;
 
                                 return (
-                                    <tr key={meta.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                                    <tr key={meta.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors group">
                                         <td className="p-6">
                                             <div className="flex items-center gap-3">
-                                                <div className={`w-3 h-3 rounded-full ${meta.status === 'ACTIVE' ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-rose-500/30'}`} />
-                                                <span className="font-bold text-slate-500">{meta.status}</span>
+                                                <div className={`w-3 h-3 rounded-full ${meta.status === 'ACTIVE' ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)]' : 'bg-rose-500/30'}`} />
+                                                <span className="font-bold text-slate-500 uppercase text-[9px] tracking-widest">{meta.status}</span>
                                             </div>
                                         </td>
-                                        <td className="p-6 max-w-[200px]">
-                                            <p className="font-black text-white uppercase truncate">{meta.name}</p>
-                                            <p className="text-[9px] text-slate-600 font-mono">ID: {meta.id}</p>
+                                        <td className="p-6 max-w-[220px]">
+                                            <p className="font-bold text-white uppercase truncate tracking-tight group-hover:text-blue-400 transition-colors">{meta.name}</p>
+                                            <p className="text-[9px] text-slate-600 font-mono mt-1">ID: {meta.id}</p>
                                         </td>
-                                        <td className="p-6 text-center font-bold">${ppto.toFixed(2)}</td>
-                                        <td className="p-6 text-center">
-                                            <span className={`px-3 py-1 rounded-lg font-black ${isOverLimit ? 'bg-rose-500/20 text-rose-500' : 'bg-blue-500/10 text-blue-400'}`}>
-                                                ${spend.toFixed(2)} <span className="text-[10px] opacity-50 ml-1">({perc.toFixed(0)}%)</span>
-                                            </span>
+                                        <td className="p-6 text-center font-bold text-slate-300">
+                                            ${ppto.toFixed(2)}
                                         </td>
                                         <td className="p-6 text-center">
-                                            <input
-                                                type="number"
-                                                className="bg-black border border-white/10 w-16 p-2 rounded-lg text-center text-blue-500 font-black outline-none"
-                                                value={settings.limit_perc}
-                                                onChange={(e) => updateSQL(meta.id, 'limit_perc', e.target.value)}
-                                            />
+                                            <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${isOverLimit ? 'bg-rose-500/20 text-rose-500 border border-rose-500/30' : 'bg-blue-500/10 text-blue-400'}`}>
+                                                ${spend.toFixed(2)} <span className="text-[9px] opacity-60 ml-1">({perc.toFixed(0)}%)</span>
+                                            </div>
                                         </td>
-                                        <td className="p-6 text-center font-black text-lg">{ins.actions?.[0]?.value || 0}</td>
+                                        <td className="p-6 text-center">
+                                            <div className="flex items-center justify-center gap-2">
+                                                <input
+                                                    type="number"
+                                                    className="bg-black border border-white/10 w-16 p-2 rounded-lg text-center text-blue-500 font-black focus:border-blue-500 outline-none transition-all"
+                                                    value={settings.limit_perc}
+                                                    onChange={(e) => updateSQL(meta.id, 'limit_perc', e.target.value)}
+                                                />
+                                                <span className="text-[10px] font-black text-slate-500">%</span>
+                                            </div>
+                                        </td>
+                                        <td className="p-6 text-center font-black text-white text-base">
+                                            {ins.actions?.[0]?.value || 0}
+                                        </td>
                                         <td className="p-6">
                                             <select
-                                                className="bg-black/50 border border-white/10 p-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-400 outline-none"
+                                                className="bg-black/50 border border-white/10 text-[9px] p-2.5 rounded-xl text-slate-300 outline-none w-full font-black uppercase tracking-widest cursor-pointer hover:border-blue-500 transition-all"
                                                 value={settings.turno}
                                                 onChange={(e) => updateSQL(meta.id, 'turno', e.target.value)}
                                             >
                                                 <option value="matutino">Matutino</option>
                                                 <option value="vespertino">Vespertino</option>
-                                                <option value="fsemana">Fsemana</option>
+                                                <option value="fsemana">F-Semana</option>
                                             </select>
                                         </td>
                                         <td className="p-6 text-center">
                                             <button
                                                 onClick={() => updateSQL(meta.id, 'is_frozen', !settings.is_frozen)}
-                                                className={`p-3 rounded-xl transition-all ${settings.is_frozen ? 'bg-blue-600 text-white' : 'bg-white/5 text-slate-700'}`}
+                                                className={`p-3 rounded-xl transition-all ${settings.is_frozen ? 'bg-blue-600 text-white shadow-lg' : 'bg-white/5 text-slate-700 hover:text-white'}`}
                                             >
                                                 <Icon name={settings.is_frozen ? "Lock" : "Unlock"} size={16} />
                                             </button>
@@ -233,7 +301,13 @@ const Dashboard = ({ userEmail }) => {
 
 const App = () => {
     const [session, setSession] = useState(null);
-    return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} />;
+    const API_URL = "https://manejoapi.libresdeumas.com";
+
+    return !session ? (
+        <LoginScreen onLogin={setSession} apiUrl={API_URL} />
+    ) : (
+        <Dashboard userEmail={session} apiUrl={API_URL} />
+    );
 };
 
 const root = ReactDOM.createRoot(document.getElementById('root'));

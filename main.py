@@ -1,13 +1,14 @@
 import os
 import asyncio
 import httpx
-from datetime import datetime
+import csv
 import pytz
+from datetime import datetime
 from typing import List
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import create_database_uri, create_engine, Column, String, Float, Boolean, DateTime, Integer
+from sqlalchemy import create_engine, Column, String, Float, Boolean, DateTime, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
@@ -15,7 +16,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- CONFIGURACIÓN DE BASE DE DATOS (SQLite -> Preparado para PostgreSQL) ---
-# Para pasar a PostgreSQL solo cambia esta URL en el .env
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./meta_control.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -24,7 +24,7 @@ Base = declarative_base()
 # --- MODELOS SQL ---
 
 class AdSetSetting(Base):
-    """Configuraciones persistentes por AdSet (Turnos, Limites, Congelado)"""
+    """Configuraciones persistentes por AdSet (Turnos, Límites, Congelado)"""
     __tablename__ = "adset_settings"
     id = Column(String, primary_key=True, index=True)
     turno = Column(String, default="matutino")
@@ -48,11 +48,11 @@ class DailyHistory(Base):
     results = Column(Integer)
     impressions = Column(Integer)
 
-# Crear tablas
+# Crear tablas si no existen
 Base.metadata.create_all(bind=engine)
 
 # --- APP INIT ---
-app = FastAPI(title="Meta Control SQL Pro", version="3.2.0")
+app = FastAPI(title="Meta Control SQL Pro v3.3", version="3.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,7 +62,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Meta Config
+# --- CONFIGURACIÓN GOOGLE SHEETS (AUDITORES) ---
+# Usamos el export CSV para leer los datos sin necesidad de OAuth complejo
+SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
+SHEET_GID = "0"
+AUDITORS_CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
+
+# --- META CONFIG ---
 ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
 AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
 API_VERSION = "v21.0"
@@ -72,16 +78,55 @@ BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 class SettingUpdate(BaseModel):
     id: str
     key: str
-    value: str # O valor mixto, simplificado a string para el ejemplo
+    value: str
 
-# --- LOGICA DE NEGOCIO ---
+class LoginRequest(BaseModel):
+    nombre: str
+    password: str
+
+# --- LÓGICA DE AUTENTICACIÓN (GOOGLE SHEETS) ---
+
+async def get_auditors_data():
+    """Descarga y parsea la hoja de Auditores desde Google Sheets"""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(AUDITORS_CSV_URL)
+            if response.status_code != 200:
+                return []
+            
+            decoded_content = response.content.decode('utf-8')
+            reader = csv.DictReader(decoded_content.splitlines())
+            # Se esperan columnas: "Nombre" y "Contraseña"
+            return list(reader)
+        except Exception as e:
+            print(f"Error leyendo Google Sheets: {e}")
+            return []
+
+@app.get("/auth/auditors")
+async def list_auditors():
+    """Retorna la lista de nombres para el desplegable del login"""
+    data = await get_auditors_data()
+    nombres = [row['Nombre'] for row in data if 'Nombre' in row]
+    return {"auditors": nombres}
+
+@app.post("/auth/login")
+async def login(req: LoginRequest):
+    """Valida las credenciales contra la hoja de Google Sheets"""
+    data = await get_auditors_data()
+    for row in data:
+        if row.get('Nombre') == req.nombre and row.get('Contraseña') == req.password:
+            return {"status": "success", "user": req.nombre}
+    
+    raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+
+# --- LÓGICA DE NEGOCIO (META & SQL) ---
 
 @app.get("/ads/sync")
 async def sync_data():
-    """Sincroniza datos de Meta con las configuraciones de la SQL local"""
+    """Sincroniza datos de Meta con las configuraciones SQL"""
     db = SessionLocal()
     try:
-        # 1. Obtener estado de automatización
+        # 1. Estado de automatización
         auto = db.query(AutomationState).first()
         if not auto:
             auto = AutomationState(id=1, is_active=False)
@@ -124,7 +169,6 @@ async def sync_data():
 
 @app.post("/ads/settings/update")
 async def update_db_setting(req: SettingUpdate):
-    """Actualiza un valor en la base de datos SQL"""
     db = SessionLocal()
     try:
         setting = db.query(AdSetSetting).filter(AdSetSetting.id == req.id).first()
@@ -141,7 +185,6 @@ async def update_db_setting(req: SettingUpdate):
 
 @app.post("/ads/automation/toggle")
 async def toggle_automation():
-    """Enciende o apaga las reglas automáticas"""
     db = SessionLocal()
     try:
         auto = db.query(AutomationState).first()
@@ -153,10 +196,7 @@ async def toggle_automation():
 
 @app.post("/ads/backup/daily")
 async def trigger_nightly_backup(background_tasks: BackgroundTasks):
-    """
-    Endpoint para el Respaldo de las 11 PM.
-    Debe ser llamado por un CRON externo del VPS.
-    """
+    """Respaldo de las 11 PM (Debe ser llamado por CRON)"""
     async def run_backup():
         db = SessionLocal()
         fields = "id,name,insights.date_preset(today){spend,actions,impressions}"
