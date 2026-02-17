@@ -4,3 +4,7 @@ httpx==0.25.1
 pydantic==2.5.1
 python-dotenv==1.0.0
 sqlalchemy==2.0.23
+pytz==2023.3.post1
+google-api-python-client==2.140.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
