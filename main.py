@@ -58,45 +58,33 @@ class AutomationState(Base):
     id = Column(Integer, primary_key=True, default=1)
     is_active = Column(Boolean, default=False)
 
-class DailyHistory(Base):
-    __tablename__ = "daily_history"
-    id = Column(Integer, primary_key=True, index=True)
-    date = Column(DateTime, default=datetime.utcnow)
-    adset_id = Column(String)
-    adset_name = Column(String)
-    spend = Column(Float)
-    results = Column(Integer)
-    impressions = Column(Integer)
-
 Base.metadata.create_all(bind=engine)
 
-# --- ADQUISICIÓN DE CREDENCIALES DE GOOGLE (MEJORADO) ---
+# --- ADQUISICIÓN DE CREDENCIALES DE GOOGLE ---
 def get_google_creds():
     """
-    Construye las credenciales de Service Account desde el .env del Docker.
+    Construye las credenciales de Service Account.
+    Asegúrate de que el .env en Docker contenga las variables correctas.
     """
-    # Método 1: Base64 (El más seguro para Docker)
     creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
     if creds_b64:
         try:
-            print("INFO: Intentando cargar credenciales desde GOOGLE_CREDS_BASE64...")
             creds_json = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
             return service_account.Credentials.from_service_account_info(
                 creds_json, 
                 scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
             )
         except Exception as e:
-            print(f"ERROR: Falló la decodificación Base64: {e}")
+            print(f"DEBUG: Error decodificando Base64: {e}")
 
-    # Método 2: Variables individuales (Asegurando nombres de tu .env)
-    print("INFO: Intentando cargar credenciales desde variables individuales...")
+    # Fallback: Variables individuales
     try:
         raw_key = os.environ.get("GOOGLE_PRIVATE_KEY", "")
-        # Corregimos el formato de la clave (común en Docker/Linux)
-        formatted_key = raw_key.replace('\\n', '\n').strip('"').strip("'")
+        # Limpieza profunda de la clave para evitar errores de formato en Docker
+        formatted_key = raw_key.replace('\\n', '\n').replace('"', '').replace("'", "").strip()
         
         info = {
-            "type": os.environ.get("GOOGLE_TYPE", "service_account"),
+            "type": "service_account",
             "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
             "private_key_id": os.environ.get("PROJECT_PRIVATE_KEY_ID"),
             "private_key": formatted_key,
@@ -108,9 +96,8 @@ def get_google_creds():
             "client_x509_cert_url": os.environ.get("GOOGLE_CLIENT_X509_CERT_URL")
         }
         
-        # Validación de campos mínimos
         if not info["private_key"] or not info["client_email"]:
-            print(f"ERROR: Faltan datos críticos (Email: {bool(info['client_email'])}, Key: {bool(info['private_key'])})")
+            print(f"DEBUG: Faltan credenciales (Email: {bool(info['client_email'])}, Key: {bool(info['private_key'])})")
             return None
             
         return service_account.Credentials.from_service_account_info(
@@ -118,7 +105,7 @@ def get_google_creds():
             scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
         )
     except Exception as e:
-        print(f"ERROR: Falló la construcción de credenciales individuales: {e}")
+        print(f"DEBUG: Error construyendo credenciales: {e}")
     
     return None
 
@@ -138,7 +125,7 @@ async def run_automation_loop():
             state = db.query(AutomationState).first()
             if not state or not state.is_active: continue
 
-            print(f"[{datetime.now()}] Motor Activo: Verificando reglas...")
+            print(f"[{datetime.now()}] Motor de Automatización verificando reglas...")
             turns = {t.name: t for t in db.query(TurnConfig).all()}
             settings = {s.id: s for s in db.query(AdSetSetting).all() if s.id in ALLOWED_ADSET_IDS}
             
@@ -184,12 +171,11 @@ async def run_automation_loop():
                     elif not should_be_active and current_active:
                         await client.post(f"{BASE_URL}/{sid}", params={"status": "PAUSED", "access_token": ACCESS_TOKEN})
         except Exception as e:
-            print(f"Error en Loop: {e}")
+            print(f"DEBUG: Error en Loop: {e}")
         finally:
             db.close()
 
-# --- APP INIT ---
-app = FastAPI(title="Meta Control Pro v4.3", version="4.3.0")
+app = FastAPI(title="Meta Control Pro v4.4", version="4.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -214,30 +200,21 @@ async def startup_event():
     db.close()
     asyncio.create_task(run_automation_loop())
 
-# --- ENDPOINTS ---
-
+# --- LÓGICA DE SHEETS ---
 async def get_auditors_from_sheets():
-    """Valida y adquiere credenciales para leer la hoja 'Auditores'"""
     try:
         creds = get_google_creds()
-        if not creds:
-            print("ERROR: No se pudieron obtener credenciales para Sheets.")
-            return []
-        
+        if not creds: return []
         service = build('sheets', 'v4', credentials=creds)
         result = service.spreadsheets().values().get(
             spreadsheetId=SHEET_ID, range="Auditores!A:B"
         ).execute()
-        
         values = result.get('values', [])
-        if not values or len(values) < 2: 
-            print("WARNING: La hoja 'Auditores' está vacía o no tiene el formato correcto.")
-            return []
-        
+        if not values or len(values) < 2: return []
         headers = values[0] # Nombre, Contraseña
         return [{headers[0]: r[0], headers[1]: r[1]} for r in values[1:] if len(r) >= 2]
     except Exception as e:
-        print(f"ERROR SHEETS API: {e}")
+        print(f"DEBUG: Error Sheets API: {e}")
         return []
 
 @app.get("/auth/auditors")
@@ -277,7 +254,7 @@ async def sync_data():
                 s = AdSetSetting(id=sid); db.add(s); db.commit()
             results.append({"meta": ad, "settings": {"turno": s.turno, "limit_perc": s.limit_perc, "is_frozen": s.is_frozen}})
 
-        return {"adsets": results, "turns": turn_data, "automation_active": auto.is_active}
+        return {"adsets": results, "turns": turn_data, "automation_active": auto.is_active if auto else False}
     finally:
         db.close()
 
@@ -311,15 +288,3 @@ async def update_meta(req: dict):
     async with httpx.AsyncClient() as client:
         await client.post(f"{BASE_URL}/{req['id']}", params={"status": req['status'], "access_token": ACCESS_TOKEN})
     return {"status": "ok"}
-
-@app.post("/ads/backup/daily")
-async def trigger_nightly_backup(background_tasks: BackgroundTasks):
-    async def run_backup():
-        db = SessionLocal()
-        try:
-            db.query(AdSetSetting).update({AdSetSetting.is_frozen: False})
-            db.commit()
-        finally:
-            db.close()
-    background_tasks.add_task(run_backup)
-    return {"status": "Backup and reset sequence initiated"}
