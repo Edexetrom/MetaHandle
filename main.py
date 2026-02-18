@@ -4,7 +4,6 @@ import httpx
 import base64
 import json
 import pytz
-import csv
 from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -23,13 +22,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- CONFIGURACIÓN DE BASE DE DATOS (SQLite/PostgreSQL) ---
+# --- CONFIGURACIÓN DE BASE DE DATOS ---
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./meta_control.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# --- CONSTANTES Y FILTROS ---
+# --- CONSTANTES ---
 ALLOWED_ADSET_IDS = [
     "120238886501840717", "120238886472900717", "120238886429400717",
     "120238886420220717", "120238886413960717", "120238886369210717",
@@ -71,28 +70,30 @@ class DailyHistory(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# --- ADQUISICIÓN DE CREDENCIALES DE GOOGLE (CRÍTICO) ---
+# --- ADQUISICIÓN DE CREDENCIALES DE GOOGLE (MEJORADO) ---
 def get_google_creds():
     """
-    Construye las credenciales de Service Account desde las variables de entorno del Docker.
+    Construye las credenciales de Service Account desde el .env del Docker.
     """
-    # 1. Intentar por Base64 (Recomendado para evitar problemas de escape)
+    # Método 1: Base64 (El más seguro para Docker)
     creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
     if creds_b64:
         try:
+            print("INFO: Intentando cargar credenciales desde GOOGLE_CREDS_BASE64...")
             creds_json = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
             return service_account.Credentials.from_service_account_info(
                 creds_json, 
                 scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
             )
         except Exception as e:
-            print(f"Error decodificando GOOGLE_CREDS_BASE64: {e}")
+            print(f"ERROR: Falló la decodificación Base64: {e}")
 
-    # 2. Intentar por variables individuales (Fallback)
+    # Método 2: Variables individuales (Asegurando nombres de tu .env)
+    print("INFO: Intentando cargar credenciales desde variables individuales...")
     try:
-        # Importante: Limpiar la clave privada de posibles escapes de Docker
         raw_key = os.environ.get("GOOGLE_PRIVATE_KEY", "")
-        formatted_key = raw_key.replace('\\n', '\n')
+        # Corregimos el formato de la clave (común en Docker/Linux)
+        formatted_key = raw_key.replace('\\n', '\n').strip('"').strip("'")
         
         info = {
             "type": os.environ.get("GOOGLE_TYPE", "service_account"),
@@ -107,13 +108,17 @@ def get_google_creds():
             "client_x509_cert_url": os.environ.get("GOOGLE_CLIENT_X509_CERT_URL")
         }
         
-        if info["private_key"] and info["client_email"]:
-            return service_account.Credentials.from_service_account_info(
-                info, 
-                scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
-            )
+        # Validación de campos mínimos
+        if not info["private_key"] or not info["client_email"]:
+            print(f"ERROR: Faltan datos críticos (Email: {bool(info['client_email'])}, Key: {bool(info['private_key'])})")
+            return None
+            
+        return service_account.Credentials.from_service_account_info(
+            info, 
+            scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
+        )
     except Exception as e:
-        print(f"Error construyendo credenciales desde variables individuales: {e}")
+        print(f"ERROR: Falló la construcción de credenciales individuales: {e}")
     
     return None
 
@@ -127,7 +132,7 @@ SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
 # --- MOTOR DE AUTOMATIZACIÓN ---
 async def run_automation_loop():
     while True:
-        await asyncio.sleep(300) # 5 minutos
+        await asyncio.sleep(300) 
         db = SessionLocal()
         try:
             state = db.query(AutomationState).first()
@@ -184,7 +189,7 @@ async def run_automation_loop():
             db.close()
 
 # --- APP INIT ---
-app = FastAPI(title="Meta Control Pro v4.2", version="4.2.0")
+app = FastAPI(title="Meta Control Pro v4.3", version="4.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -215,7 +220,9 @@ async def get_auditors_from_sheets():
     """Valida y adquiere credenciales para leer la hoja 'Auditores'"""
     try:
         creds = get_google_creds()
-        if not creds: raise Exception("No Google Credentials found")
+        if not creds:
+            print("ERROR: No se pudieron obtener credenciales para Sheets.")
+            return []
         
         service = build('sheets', 'v4', credentials=creds)
         result = service.spreadsheets().values().get(
@@ -223,12 +230,14 @@ async def get_auditors_from_sheets():
         ).execute()
         
         values = result.get('values', [])
-        if not values or len(values) < 2: return []
+        if not values or len(values) < 2: 
+            print("WARNING: La hoja 'Auditores' está vacía o no tiene el formato correcto.")
+            return []
         
-        headers = values[0]
+        headers = values[0] # Nombre, Contraseña
         return [{headers[0]: r[0], headers[1]: r[1]} for r in values[1:] if len(r) >= 2]
     except Exception as e:
-        print(f"Error Sheets: {e}")
+        print(f"ERROR SHEETS API: {e}")
         return []
 
 @app.get("/auth/auditors")
@@ -240,7 +249,7 @@ async def list_auditors():
 async def login(req: dict):
     data = await get_auditors_from_sheets()
     for row in data:
-        if row.get('Nombre') == req.get('nombre') and row.get('Contraseña') == req.get('password'):
+        if str(row.get('Nombre')) == str(req.get('nombre')) and str(row.get('Contraseña')) == str(req.get('password')):
             return {"status": "success", "user": row.get('Nombre')}
     raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
