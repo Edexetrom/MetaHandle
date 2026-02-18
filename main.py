@@ -114,44 +114,7 @@ def get_google_creds():
         return service_account.Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
     return None
 
-@app.get("/ads/sync")
-async def sync_data():
-    """Sincroniza y filtra SOLO los IDs permitidos con límite aumentado"""
-    db = SessionLocal()
-    try:
-        auto = db.query(AutomationState).first()
-        turns = db.query(TurnConfig).all()
-        turn_data = {t.name: {"start": t.start_hour, "end": t.end_hour, "days": t.days} for t in turns}
-        
-        fields = "id,name,status,daily_budget,bid_amount,insights.date_preset(today){spend,actions,impressions,cpc,ctr}"
-        async with httpx.AsyncClient() as client:
-            # Agregamos limit=500 para asegurar que capturamos todos los adsets de la cuenta
-            res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
-                "fields": fields, 
-                "limit": "500", 
-                "access_token": ACCESS_TOKEN
-            })
-            meta_adsets = res.json().get("data", [])
 
-        results = []
-        for ad in meta_adsets:
-            sid = str(ad['id'])
-            if sid not in ALLOWED_ADSET_IDS:
-                continue
-                
-            s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
-            if not s:
-                s = AdSetSetting(id=sid)
-                db.add(s); db.commit()
-            
-            results.append({
-                "meta": ad, 
-                "settings": {"turno": s.turno, "limit_perc": s.limit_perc, "is_frozen": s.is_frozen}
-            })
-
-        return {"adsets": results, "turns": turn_data, "automation_active": auto.is_active}
-    finally:
-        db.close()
 # --- MOTOR DE AUTOMATIZACIÓN ---
 
 async def run_automation_loop():
@@ -232,7 +195,7 @@ async def startup_event():
 
 @app.get("/ads/sync")
 async def sync_data():
-    """Sincroniza y filtra SOLO los IDs permitidos"""
+    """Sincroniza y filtra SOLO los IDs permitidos con límite aumentado"""
     db = SessionLocal()
     try:
         auto = db.query(AutomationState).first()
@@ -241,8 +204,11 @@ async def sync_data():
         
         fields = "id,name,status,daily_budget,bid_amount,insights.date_preset(today){spend,actions,impressions,cpc,ctr}"
         async with httpx.AsyncClient() as client:
+            # Agregamos limit=500 para asegurar que capturamos todos los adsets de la cuenta
             res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
-                "fields": fields, "access_token": ACCESS_TOKEN
+                "fields": fields, 
+                "limit": "500", 
+                "access_token": ACCESS_TOKEN
             })
             meta_adsets = res.json().get("data", [])
 
