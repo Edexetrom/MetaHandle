@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Google Auth Libraries
+# Librerías de Google Auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -83,7 +83,6 @@ def init_db():
         ]
         db.add_all(defaults)
         db.commit()
-    # Aseguramos que el estado inicial no se sobreescriba si ya existe
     if not db.query(AutomationState).first():
         db.add(AutomationState(id=1, is_active=False))
         db.commit()
@@ -91,7 +90,7 @@ def init_db():
 
 init_db()
 
-app = FastAPI(title="Meta Control Pro v4.0", version="4.0.0")
+app = FastAPI(title="Meta Control Pro v4.1", version="4.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -101,13 +100,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- CONFIGURACIÓN GOOGLE API ---
+def get_google_creds():
+    # Prioridad: JSON codificado en Base64 (Ideal para Docker)
+    creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+    if creds_b64:
+        try:
+            creds_json = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+            return service_account.Credentials.from_service_account_info(
+                creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
+            )
+        except Exception as e:
+            print(f"Error decodificando GOOGLE_CREDS_BASE64: {e}")
+    
+    # Fallback: Variables individuales
+    try:
+        info = {
+            "type": os.environ.get("GOOGLE_TYPE", "service_account"),
+            "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
+            "private_key_id": os.environ.get("PROJECT_PRIVATE_KEY_ID"),
+            "private_key": os.environ.get("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+            "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
+            "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": os.environ.get("GOOGLE_CLIENT_X509_CERT_URL")
+        }
+        if info["private_key"]:
+            return service_account.Credentials.from_service_account_info(
+                info, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
+            )
+    except Exception as e:
+        print(f"Error cargando credenciales individuales de Google: {e}")
+    
+    return None
+
+SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
+RANGE_NAME = "Auditores!A:B" # Col A: Nombre, Col B: Contraseña
+
 # --- CONFIGURACIÓN META ---
 ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
 AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
 API_VERSION = "v21.0"
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 
-# --- MOTOR DE AUTOMATIZACIÓN (300 seg = 5 min) ---
+# --- LÓGICA DE AUDITORES (GOOGLE API) ---
+
+async def get_auditors_data():
+    """Consulta la API de Google Sheets de forma segura"""
+    try:
+        creds = get_google_creds()
+        if not creds:
+            print("No se encontraron credenciales válidas de Google.")
+            return []
+        
+        service = build('sheets', 'v4', credentials=creds)
+        sheet = service.spreadsheets()
+        result = sheet.values().get(spreadsheetId=SHEET_ID, range=RANGE_NAME).execute()
+        values = result.get('values', [])
+        
+        if not values or len(values) < 2:
+            return []
+            
+        headers = values[0] # [Nombre, Contraseña]
+        data = []
+        for row in values[1:]:
+            if len(row) >= 2:
+                data.append({headers[0]: row[0], headers[1]: row[1]})
+        return data
+    except Exception as e:
+        print(f"Error consultando Google Sheets: {e}")
+        return []
+
+# --- MOTOR DE AUTOMATIZACIÓN ---
 async def run_automation_loop():
     while True:
         await asyncio.sleep(300) 
@@ -117,7 +183,7 @@ async def run_automation_loop():
             if not state or not state.is_active:
                 continue
 
-            print(f"[{datetime.now()}] Ejecutando Motor...")
+            print(f"[{datetime.now()}] Ejecutando Motor de Reglas...")
             turns = {t.name: t for t in db.query(TurnConfig).all()}
             settings = {s.id: s for s in db.query(AdSetSetting).all() if s.id in ALLOWED_ADSET_IDS}
             
@@ -141,7 +207,6 @@ async def run_automation_loop():
                     s = settings[sid]
                     if s.is_frozen: continue 
 
-                    # Lógica de Horario Multiturno
                     assigned_turns = [t.strip().lower() for t in s.turno.split(',')]
                     in_time = False
                     for turn_name in assigned_turns:
@@ -153,7 +218,6 @@ async def run_automation_loop():
                                 in_time = True
                                 break
 
-                    # Lógica de Stop-Loss
                     ins = ad.get("insights", {}).get("data", [{}])[0]
                     spend = float(ins.get("spend", 0))
                     budget = float(ad.get("daily_budget", 0)) / 100
@@ -168,7 +232,7 @@ async def run_automation_loop():
                         await client.post(f"{BASE_URL}/{sid}", params={"status": "PAUSED", "access_token": ACCESS_TOKEN})
 
         except Exception as e:
-            print(f"Error Loop: {e}")
+            print(f"Error en Loop: {e}")
         finally:
             db.close()
 
@@ -177,6 +241,26 @@ async def startup_event():
     asyncio.create_task(run_automation_loop())
 
 # --- ENDPOINTS ---
+
+@app.get("/auth/auditors")
+async def list_auditors():
+    """Retorna los nombres desde el Excel para el desplegable"""
+    data = await get_auditors_data()
+    nombres = [row['Nombre'] for row in data if 'Nombre' in row]
+    return {"auditors": nombres}
+
+@app.post("/auth/login")
+async def login(req: dict):
+    """Valida nombre y contraseña contra el Excel"""
+    data = await get_auditors_data()
+    nombre_solicitado = req.get("nombre")
+    password_solicitado = req.get("password")
+    
+    for row in data:
+        if row.get('Nombre') == nombre_solicitado and row.get('Contraseña') == password_solicitado:
+            return {"status": "success", "user": nombre_solicitado}
+            
+    raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
 
 @app.get("/ads/sync")
 async def sync_data():
@@ -241,26 +325,33 @@ async def toggle_auto():
     finally:
         db.close()
 
+@app.post("/ads/settings/update_meta")
+async def update_meta(req: dict):
+    async with httpx.AsyncClient() as client:
+        await client.post(f"{BASE_URL}/{req['id']}", params={"status": req['status'], "access_token": ACCESS_TOKEN})
+    return {"status": "ok"}
+
+@app.post("/ads/turns/update")
+async def update_turn(req: dict):
+    db = SessionLocal()
+    try:
+        t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
+        t.start_hour = float(req['start_hour'])
+        t.end_hour = float(req['end_hour'])
+        t.days = req['days']
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
+
 @app.post("/ads/backup/daily")
 async def trigger_nightly_backup(background_tasks: BackgroundTasks):
-    """Corte de las 11 PM: Respaldo y DESCONGELADO TOTAL"""
     async def run_backup():
         db = SessionLocal()
         try:
-            # 1. RESET DE CONGELADOS (REQUERIDO)
             db.query(AdSetSetting).update({AdSetSetting.is_frozen: False})
             db.commit()
-            # 2. Respaldo histórico...
         finally:
             db.close()
     background_tasks.add_task(run_backup)
-    return {"status": "Backup and reset sequence initiated"}
-
-# --- AUTH SIMULADO ---
-@app.get("/auth/auditors")
-async def list_auditors():
-    return {"auditors": ["J. Frabling", "Auditor General"]}
-
-@app.post("/auth/login")
-async def login(req: dict):
-    return {"status": "success", "user": req.get("nombre")}
+    return {"status": "Backup and reset initiated"}
