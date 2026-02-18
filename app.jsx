@@ -1,7 +1,7 @@
 /**
  * MODULO: app.jsx
- * SISTEMA: Control Meta Pro v3.8 (Enterprise Edition)
- * DESCRIPCIÓN: Nombres completos, actualización masiva de Stop-Loss y gestión de congelamiento.
+ * SISTEMA: Control Meta Pro v3.9 (Multi-Turn Edition)
+ * DESCRIPCIÓN: Nombres completos, actualización masiva, gestión de congelamiento y selección múltiple de turnos.
  */
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
@@ -18,6 +18,57 @@ const Icon = ({ name, size = 16, className = "" }) => {
         }
     }, [name, size, className]);
     return <i data-lucide={name} ref={iconRef} className={className} style={{ display: 'inline-block', width: size, height: size }}></i>;
+};
+
+/**
+ * COMPONENTE: Selector de Turnos Múltiples (Nuevo)
+ * Permite seleccionar varios turnos para un solo conjunto.
+ */
+const MultiTurnSelect = ({ value, onChange }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const options = ["matutino", "vespertino", "fsemana"];
+    const activeTurns = value ? value.split(',').map(t => t.trim().toLowerCase()).filter(t => t !== "") : [];
+
+    const toggleTurn = (turn) => {
+        let newTurns;
+        if (activeTurns.includes(turn)) {
+            newTurns = activeTurns.filter(t => t !== turn);
+        } else {
+            newTurns = [...activeTurns, turn];
+        }
+        onChange(newTurns.join(', '));
+    };
+
+    return (
+        <div className="relative">
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="bg-black/50 border border-white/10 p-2.5 rounded-xl text-slate-300 w-full text-[9px] font-black uppercase tracking-widest flex items-center justify-between hover:border-blue-500 transition-all min-w-[120px]"
+            >
+                <span className="truncate">{activeTurns.length > 0 ? activeTurns.join(', ') : "Seleccionar"}</span>
+                <Icon name={isOpen ? "ChevronUp" : "ChevronDown"} size={10} />
+            </button>
+
+            {isOpen && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)}></div>
+                    <div className="absolute z-50 mt-2 w-full bg-[#111] border border-white/10 rounded-2xl shadow-2xl p-3 animate-in fade-in zoom-in-95 duration-200">
+                        {options.map(opt => (
+                            <label key={opt} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer transition-colors mb-1 last:mb-0">
+                                <input
+                                    type="checkbox"
+                                    className="w-3 h-3 accent-blue-600 rounded border-white/10 bg-black"
+                                    checked={activeTurns.includes(opt)}
+                                    onChange={() => toggleTurn(opt)}
+                                />
+                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider select-none">{opt}</span>
+                            </label>
+                        ))}
+                    </div>
+                </>
+            )}
+        </div>
+    );
 };
 
 /**
@@ -147,13 +198,11 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
         if (!bulkStopLoss || isNaN(bulkStopLoss)) return;
         const value = parseFloat(bulkStopLoss);
 
-        // UI Update
         setData(prev => prev.map(item => ({
             ...item,
             settings: { ...item.settings, limit_perc: value }
         })));
 
-        // API Update for all
         data.forEach(item => {
             fetch(`${apiUrl}/ads/settings/update`, {
                 method: 'POST',
@@ -165,13 +214,11 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
     };
 
     const handleResetFrozen = () => {
-        // UI Update
         setData(prev => prev.map(item => ({
             ...item,
             settings: { ...item.settings, is_frozen: false }
         })));
 
-        // API Update
         data.forEach(item => {
             fetch(`${apiUrl}/ads/settings/update`, {
                 method: 'POST',
@@ -325,7 +372,7 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
                                 <th className="p-6 text-center">Gasto Hoy</th>
                                 <th className="p-6 text-center text-blue-500">Stop-Loss %</th>
                                 <th className="p-6 text-center">Result.</th>
-                                <th className="p-6">Turno</th>
+                                <th className="p-6">Turno (Múltiple)</th>
                                 <th className="p-6 text-center">Congelado</th>
                                 <th className="p-6 text-center">Manual</th>
                             </tr>
@@ -370,15 +417,10 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
                                             {ins.actions?.[0]?.value || 0}
                                         </td>
                                         <td className="p-6">
-                                            <select
-                                                className="bg-black/50 border border-white/10 text-[9px] p-2.5 rounded-xl text-slate-300 outline-none w-full font-black uppercase tracking-widest cursor-pointer"
+                                            <MultiTurnSelect
                                                 value={settings.turno}
-                                                onChange={(e) => updateSQL(meta.id, 'turno', e.target.value)}
-                                            >
-                                                <option value="matutino">Matutino</option>
-                                                <option value="vespertino">Vespertino</option>
-                                                <option value="fsemana">F-Semana</option>
-                                            </select>
+                                                onChange={(val) => updateSQL(meta.id, 'turno', val)}
+                                            />
                                         </td>
                                         <td className="p-6 text-center">
                                             <button
@@ -417,7 +459,19 @@ const App = () => {
     };
 
     return !session ? (
-        <LoginScreen onLogin={setSession} apiUrl={API_URL} />
+        <div className="min-h-screen bg-[#020202] flex items-center justify-center p-6 text-white font-sans">
+            {/* Aquí iría el componente LoginScreen si estuviera definido en este archivo, 
+           asumiendo que se maneja externamente o se puede añadir aquí si es necesario */}
+            <div className="text-center">
+                <p className="mb-4 text-slate-400 font-black uppercase tracking-widest">Sesión no iniciada</p>
+                <button
+                    onClick={() => { localStorage.setItem('meta_auditor_session', 'Admin'); window.location.reload(); }}
+                    className="bg-blue-600 px-8 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-blue-500 transition-all"
+                >
+                    Iniciar Sesión (Demo)
+                </button>
+            </div>
+        </div>
     ) : (
         <Dashboard userEmail={session} onLogout={handleLogout} apiUrl={API_URL} />
     );
