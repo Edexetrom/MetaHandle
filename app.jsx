@@ -1,7 +1,7 @@
 /**
  * MODULO: app.jsx
  * SISTEMA: Control Meta Pro v3.9 (Multi-Turn Edition)
- * DESCRIPCIÓN: Nombres completos, actualización masiva, gestión de congelamiento y selección múltiple de turnos.
+ * DESCRIPCIÓN: Nombres completos, actualización masiva, gestión de congelamiento y selección múltiple de turnos con Login recuperado.
  */
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
@@ -143,6 +143,71 @@ const TurnConfigPanel = ({ turns, onUpdate }) => {
                         </div>
                     </div>
                 ))}
+            </div>
+        </div>
+    );
+};
+
+/**
+ * ====================================================================
+ * MODULO: LOGIN SCREEN
+ * ====================================================================
+ */
+const LoginScreen = ({ onLogin, apiUrl }) => {
+    const [auditors, setAuditors] = useState([]);
+    const [selectedAuditor, setSelectedAuditor] = useState("");
+    const [password, setPassword] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        const fetchAuditors = async () => {
+            try {
+                const res = await fetch(`${apiUrl}/auth/auditors`);
+                const json = await res.json();
+                setAuditors(json.auditors || []);
+                if (json.auditors?.length > 0) setSelectedAuditor(json.auditors[0]);
+            } catch (e) { setError("Fallo al conectar con Auditores."); }
+        };
+        fetchAuditors();
+    }, [apiUrl]);
+
+    const handleLogin = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            const res = await fetch(`${apiUrl}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nombre: selectedAuditor, password })
+            });
+            if (res.ok) {
+                onLogin(selectedAuditor);
+            } else {
+                setError("Credenciales incorrectas");
+            }
+        } catch (e) { setError("Error de conexión"); }
+        finally { setLoading(false); }
+    };
+
+    return (
+        <div className="min-h-screen bg-[#020202] flex items-center justify-center p-6">
+            <div className="w-full max-w-md bg-[#0a0a0a] border border-white/5 p-12 rounded-[3rem] shadow-2xl text-center">
+                <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-blue-900/40 shadow-2xl">
+                    <Icon name="ShieldCheck" size={40} className="text-white" />
+                </div>
+                <h1 className="text-3xl font-black text-white italic uppercase tracking-tighter mb-2">Control Meta</h1>
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10 italic">Auditores Dashboard v3.9</p>
+                <form onSubmit={handleLogin} className="space-y-6 text-left">
+                    {error && <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl text-rose-500 text-[10px] font-black uppercase text-center">{error}</div>}
+                    <select className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white outline-none appearance-none cursor-pointer" value={selectedAuditor} onChange={e => setSelectedAuditor(e.target.value)}>
+                        {auditors.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <input type="password" required placeholder="Contraseña" className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none transition-all" onChange={e => setPassword(e.target.value)} />
+                    <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white transition-all shadow-xl disabled:opacity-50">
+                        {loading ? "Verificando..." : "Ingresar al Panel"}
+                    </button>
+                </form>
             </div>
         </div>
     );
@@ -458,20 +523,13 @@ const App = () => {
         setSession(null);
     };
 
+    const handleLogin = (user) => {
+        localStorage.setItem('meta_auditor_session', user);
+        setSession(user);
+    };
+
     return !session ? (
-        <div className="min-h-screen bg-[#020202] flex items-center justify-center p-6 text-white font-sans">
-            {/* Aquí iría el componente LoginScreen si estuviera definido en este archivo, 
-           asumiendo que se maneja externamente o se puede añadir aquí si es necesario */}
-            <div className="text-center">
-                <p className="mb-4 text-slate-400 font-black uppercase tracking-widest">Sesión no iniciada</p>
-                <button
-                    onClick={() => { localStorage.setItem('meta_auditor_session', 'Admin'); window.location.reload(); }}
-                    className="bg-blue-600 px-8 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-blue-500 transition-all"
-                >
-                    Iniciar Sesión (Demo)
-                </button>
-            </div>
-        </div>
+        <LoginScreen onLogin={handleLogin} apiUrl={API_URL} />
     ) : (
         <Dashboard userEmail={session} onLogout={handleLogout} apiUrl={API_URL} />
     );
