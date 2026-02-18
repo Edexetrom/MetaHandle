@@ -4,116 +4,54 @@ import httpx
 import base64
 import json
 import pytz
-from datetime import datetime
+from datetime import datetime, time
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Librerías de Google Auth
+# Google Auth & Sheets
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# SQLAlchemy
-from sqlalchemy import create_engine, Column, String, Float, Boolean, DateTime, Integer
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
+# Firebase/Firestore para sincronización en tiempo real entre auditores
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-# Cargamos el .env por si acaso, aunque Docker ya lo inyecta
 load_dotenv()
 
-# --- CONFIGURACIÓN DE BASE DE DATOS ---
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./meta_control.db")
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# --- CONFIGURACIÓN DE FIREBASE (Sincronización Real-Time) ---
+def init_firebase():
+    creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+    if not firebase_admin._apps:
+        if creds_b64:
+            creds_dict = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+            cred = credentials.Certificate(creds_dict)
+        else:
+            # Fallback a variables individuales
+            info = {
+                "type": "service_account",
+                "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
+                "private_key": os.environ.get("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+                "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+            cred = credentials.Certificate(info)
+        firebase_admin.initialize_app(cred)
+    return firestore.client()
 
-# --- FILTRO DE SEGURIDAD (Tus 18 IDs) ---
+db_fs = init_firebase()
+app_id = os.environ.get("APP_ID", "control-meta-pro-v4")
+
+# --- IDs PERMITIDOS ---
 ALLOWED_ADSET_IDS = [
     "120238886501840717", "120238886472900717", "120238886429400717",
     "120238886420220717", "120238886413960717", "120238886369210717",
-    "120234721717970717", "120234721717960717", "120234721717950717",
+    "120234721717970717", "120234721717960717", "120234721717990717",
     "120233618279570717", "120233618279540717", "120233611687810717",
     "120232204774610717", "120232204774590717", "120232204774570717",
     "120232157515490717", "120232157515480717", "120232157515460717"
 ]
-
-# --- MODELOS SQL ---
-class AdSetSetting(Base):
-    __tablename__ = "adset_settings"
-    id = Column(String, primary_key=True, index=True)
-    turno = Column(String, default="matutino")
-    limit_perc = Column(Float, default=50.0)
-    is_frozen = Column(Boolean, default=False)
-
-class TurnConfig(Base):
-    __tablename__ = "turn_configs"
-    name = Column(String, primary_key=True) 
-    start_hour = Column(Float)
-    end_hour = Column(Float)
-    days = Column(String) 
-
-class AutomationState(Base):
-    __tablename__ = "automation_state"
-    id = Column(Integer, primary_key=True, default=1)
-    is_active = Column(Boolean, default=False)
-
-Base.metadata.create_all(bind=engine)
-
-# --- SISTEMA DE CREDENCIALES DE GOOGLE (DOCKER OPTIMIZED) ---
-def get_google_creds():
-    print("--- [LOG] Verificando Credenciales de Google ---")
-    
-    # Prioridad 1: GOOGLE_CREDS_BASE64
-    creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
-    if creds_b64:
-        try:
-            print("INFO: Decodificando GOOGLE_CREDS_BASE64...")
-            creds_json = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
-            return service_account.Credentials.from_service_account_info(
-                creds_json, 
-                scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
-            )
-        except Exception as e:
-            print(f"ERROR: Falló Base64: {e}")
-
-    # Prioridad 2: Variables Individuales
-    try:
-        raw_key = os.environ.get("GOOGLE_PRIVATE_KEY", "")
-        # Limpieza de escapes de Docker y comillas
-        formatted_key = raw_key.replace('\\n', '\n').strip('"').strip("'")
-        
-        info = {
-            "type": os.environ.get("GOOGLE_TYPE", "service_account"),
-            "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
-            "private_key_id": os.environ.get("PROJECT_PRIVATE_KEY_ID"),
-            "private_key": formatted_key,
-            "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
-            "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": os.environ.get("GOOGLE_CLIENT_X509_CERT_URL")
-        }
-
-        # Verificación en logs (sin mostrar la key completa)
-        print(f"INFO: Google Project ID: {info['project_id']}")
-        print(f"INFO: Google Client Email: {info['client_email']}")
-        print(f"INFO: Key detectada: {bool(info['private_key'])}")
-
-        if not info["private_key"] or not info["client_email"]:
-            print("ERROR: Faltan variables de entorno esenciales para Google Sheets.")
-            return None
-            
-        return service_account.Credentials.from_service_account_info(
-            info, 
-            scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
-        )
-    except Exception as e:
-        print(f"ERROR: No se pudieron construir las credenciales: {e}")
-    
-    return None
 
 # --- CONFIGURACIÓN META ---
 ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
@@ -122,194 +60,140 @@ API_VERSION = "v21.0"
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
 
-# --- MOTOR DE AUTOMATIZACIÓN ---
-async def run_automation_loop():
-    while True:
-        await asyncio.sleep(300) 
-        db = SessionLocal()
-        try:
-            state = db.query(AutomationState).first()
-            if not state or not state.is_active: continue
+# --- UTILIDADES DE TIEMPO ---
+DAYS_MAP = {"L": 0, "M": 1, "MI": 2, "J": 3, "V": 4, "S": 5, "D": 6}
 
-            print(f"[{datetime.now()}] Motor de Reglas: Analizando AdSets...")
-            turns = {t.name: t for t in db.query(TurnConfig).all()}
-            settings = {s.id: s for s in db.query(AdSetSetting).all() if s.id in ALLOWED_ADSET_IDS}
-            
+def parse_days(days_str: str) -> List[int]:
+    """Convierte 'L-V' en [0,1,2,3,4] o 'L, S' en [0, 5]"""
+    days = []
+    if "-" in days_str:
+        start, end = days_str.split("-")
+        s_idx = DAYS_MAP.get(start.strip().upper(), 0)
+        e_idx = DAYS_MAP.get(end.strip().upper(), 6)
+        return list(range(s_idx, e_idx + 1))
+    else:
+        for d in days_str.split(","):
+            idx = DAYS_MAP.get(d.strip().upper())
+            if idx is not None: days.append(idx)
+    return days
+
+# --- MOTOR DE AUTOMATIZACIÓN (Loop Cada 2 Minutos) ---
+async def automation_engine():
+    while True:
+        await asyncio.sleep(120) 
+        try:
+            # 1. Leer estado global desde Firestore
+            state_ref = db_fs.collection("artifacts").document(app_id).collection("public").document("data").collection("automation").document("state")
+            state_doc = state_ref.get()
+            if not state_doc.exists or not state_doc.to_dict().get("is_active"):
+                continue
+
+            # 2. Reset diario a medianoche (CDMX)
             mex_tz = pytz.timezone('America/Mexico_City')
             now = datetime.now(mex_tz)
-            curr_h = now.hour + (now.minute / 60)
-            weekday = now.weekday() 
+            if now.hour == 0 and now.minute < 3:
+                # Reset frozen
+                settings_ref = db_fs.collection("artifacts").document(app_id).collection("public").document("data").collection("adsets")
+                docs = settings_ref.stream()
+                for d in docs: d.reference.update({"is_frozen": False})
 
+            # 3. Consultar Meta
             async with httpx.AsyncClient() as client:
                 res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
                     "fields": "id,status,daily_budget,insights.date_preset(today){spend}",
                     "access_token": ACCESS_TOKEN, "limit": "500"
                 })
-                adsets_meta = res.json().get("data", [])
+                meta_data = res.json().get("data", [])
+                
+                # 4. Procesar Reglas
+                settings_col = db_fs.collection("artifacts").document(app_id).collection("public").document("data").collection("adsets")
+                turns_col = db_fs.collection("artifacts").document(app_id).collection("public").document("data").collection("turns")
+                
+                turns_dict = {t.id: t.to_dict() for t in turns_col.stream()}
+                
+                curr_h = now.hour + (now.minute / 60)
+                curr_day = now.weekday()
 
-                for ad in adsets_meta:
-                    sid = ad['id']
-                    if sid not in ALLOWED_ADSET_IDS or sid not in settings: continue
-                    s = settings[sid]
-                    if s.is_frozen: continue 
+                for ad in meta_data:
+                    if ad['id'] not in ALLOWED_ADSET_IDS: continue
+                    
+                    s_doc = settings_col.document(ad['id']).get()
+                    if not s_doc.exists: continue
+                    s = s_doc.to_dict()
+                    
+                    if s.get("is_frozen"): continue
 
-                    assigned_turns = [t.strip().lower() for t in s.turno.split(',')]
+                    # Reglas de Turno
+                    assigned_turns = [t.strip().lower() for t in s.get("turno", "").split(",")]
                     in_time = False
-                    for turn_name in assigned_turns:
-                        t_conf = turns.get(turn_name)
-                        if t_conf:
-                            is_weekend = (t_conf.name == "fsemana" and weekday >= 5)
-                            is_weekday = (t_conf.name != "fsemana" and weekday < 5)
-                            if (is_weekday or is_weekend) and (t_conf.start_hour <= curr_h < t_conf.end_hour):
-                                in_time = True
-                                break
-
-                    ins = ad.get("insights", {}).get("data", [{}])[0]
-                    spend = float(ins.get("spend", 0))
+                    for t_name in assigned_turns:
+                        t_cfg = turns_dict.get(t_name)
+                        if t_cfg:
+                            active_days = parse_days(t_cfg.get("days", ""))
+                            if curr_day in active_days and (t_cfg['start'] <= curr_h < t_cfg['end']):
+                                in_time = True; break
+                    
+                    # Stop Loss
+                    spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0))
                     budget = float(ad.get("daily_budget", 0)) / 100
-                    over_budget = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
+                    limit = s.get("limit_perc", 50.0)
+                    over_limit = (spend / budget * 100) >= limit if budget > 0 else False
 
-                    should_be_active = in_time and not over_budget
-                    current_active = ad['status'] == 'ACTIVE'
+                    should_be_active = in_time and not over_limit
+                    is_active = ad['status'] == 'ACTIVE'
 
-                    if should_be_active and not current_active:
-                        await client.post(f"{BASE_URL}/{sid}", params={"status": "ACTIVE", "access_token": ACCESS_TOKEN})
-                    elif not should_be_active and current_active:
-                        await client.post(f"{BASE_URL}/{sid}", params={"status": "PAUSED", "access_token": ACCESS_TOKEN})
+                    if should_be_active and not is_active:
+                        await client.post(f"{BASE_URL}/{ad['id']}", params={"status": "ACTIVE", "access_token": ACCESS_TOKEN})
+                    elif not should_be_active and is_active:
+                        await client.post(f"{BASE_URL}/{ad['id']}", params={"status": "PAUSED", "access_token": ACCESS_TOKEN})
+
         except Exception as e:
-            print(f"DEBUG: Error Loop Automático: {e}")
-        finally:
-            db.close()
+            print(f"Engine Error: {e}")
 
-# --- APP STARTUP ---
-app = FastAPI(title="Meta Control Pro v4.4", version="4.4.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# --- API ENDPOINTS ---
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
-async def startup_event():
-    db = SessionLocal()
-    if not db.query(TurnConfig).first():
-        defaults = [
-            TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
-            TurnConfig(name="vespertino", start_hour=13.0, end_hour=20.5, days="L-V"),
-            TurnConfig(name="fsemana", start_hour=8.0, end_hour=14.0, days="S")
-        ]
-        db.add_all(defaults); db.commit()
-    if not db.query(AutomationState).first():
-        db.add(AutomationState(id=1, is_active=False)); db.commit()
-    db.close()
-    asyncio.create_task(run_automation_loop())
-
-# --- LÓGICA DE SHEETS (CONEXIÓN SEGURA) ---
-async def get_auditors_from_sheets():
-    try:
-        creds = get_google_creds()
-        if not creds:
-            return []
-            
-        service = build('sheets', 'v4', credentials=creds)
-        # Rango: Hoja Auditores, Columnas A y B
-        result = service.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID, range="Auditores!A:B"
-        ).execute()
-        
-        values = result.get('values', [])
-        if not values or len(values) < 2:
-            return []
-            
-        headers = values[0] # [Nombre, Contraseña]
-        return [{headers[0]: r[0], headers[1]: r[1]} for r in values[1:] if len(r) >= 2]
-    except Exception as e:
-        print(f"DEBUG: Error en Google Sheets API: {e}")
-        return []
+async def startup():
+    asyncio.create_task(automation_engine())
 
 @app.get("/auth/auditors")
-async def list_auditors():
-    data = await get_auditors_from_sheets()
-    return {"auditors": [r['Nombre'] for r in data if 'Nombre' in r]}
+async def get_auditors():
+    """Lee auditores desde la hoja de Google"""
+    try:
+        creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+        creds_dict = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+        service = build('sheets', 'v4', credentials=creds)
+        res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+        values = res.get('values', [])
+        return {"auditors": [row[0] for row in values[1:] if row]}
+    except:
+        return {"auditors": ["Admin"]}
 
 @app.post("/auth/login")
 async def login(req: dict):
-    data = await get_auditors_from_sheets()
-    for row in data:
-        if str(row.get('Nombre')) == str(req.get('nombre')) and str(row.get('Contraseña')) == str(req.get('password')):
-            return {"status": "success", "user": row.get('Nombre')}
-    raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    try:
+        creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+        creds_dict = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+        service = build('sheets', 'v4', credentials=creds)
+        res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+        values = res.get('values', [])
+        for row in values[1:]:
+            if row[0] == req['nombre'] and row[1] == req['password']:
+                return {"status": "success", "user": row[0]}
+        raise HTTPException(401)
+    except:
+        raise HTTPException(401)
 
 @app.get("/ads/sync")
-async def sync_data():
-    db = SessionLocal()
-    try:
-        auto = db.query(AutomationState).first()
-        turns = db.query(TurnConfig).all()
-        turn_data = {t.name: {"start": t.start_hour, "end": t.end_hour, "days": t.days} for t in turns}
-        
-        async with httpx.AsyncClient() as client:
-            res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
-                "fields": "id,name,status,daily_budget,bid_amount,insights.date_preset(today){spend,actions,impressions,cpc,ctr}",
-                "limit": "500", "access_token": ACCESS_TOKEN
-            })
-            meta_adsets = res.json().get("data", [])
-
-        results = []
-        for ad in meta_adsets:
-            sid = str(ad['id'])
-            if sid not in ALLOWED_ADSET_IDS: continue
-            s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
-            if not s:
-                s = AdSetSetting(id=sid); db.add(s); db.commit()
-            results.append({"meta": ad, "settings": {"turno": s.turno, "limit_perc": s.limit_perc, "is_frozen": s.is_frozen}})
-
-        return {"adsets": results, "turns": turn_data, "automation_active": auto.is_active if auto else False}
-    finally:
-        db.close()
-
-@app.post("/ads/settings/update")
-async def update_setting(req: dict):
-    db = SessionLocal()
-    try:
-        s = db.query(AdSetSetting).filter(AdSetSetting.id == req['id']).first()
-        if not s: return {"status": "error"}
-        if req['key'] == 'turno': s.turno = req['value']
-        elif req['key'] == 'limit_perc': s.limit_perc = float(req['value'])
-        elif req['key'] == 'is_frozen': s.is_frozen = (str(req['value']).lower() == 'true')
-        db.commit()
-        return {"status": "ok"}
-    finally:
-        db.close()
-
-@app.post("/ads/automation/toggle")
-async def toggle_auto():
-    db = SessionLocal()
-    try:
-        auto = db.query(AutomationState).first()
-        auto.is_active = not auto.is_active
-        db.commit()
-        return {"is_active": auto.is_active}
-    finally:
-        db.close()
-
-@app.post("/ads/settings/update_meta")
-async def update_meta(req: dict):
+async def sync_meta():
+    """Sincroniza datos de Meta para el Frontend"""
     async with httpx.AsyncClient() as client:
-        await client.post(f"{BASE_URL}/{req['id']}", params={"status": req['status'], "access_token": ACCESS_TOKEN})
-    return {"status": "ok"}
-
-@app.post("/ads/backup/daily")
-async def trigger_nightly_backup(background_tasks: BackgroundTasks):
-    async def run_backup():
-        db = SessionLocal()
-        try:
-            db.query(AdSetSetting).update({AdSetSetting.is_frozen: False})
-            db.commit()
-        finally:
-            db.close()
-    background_tasks.add_task(run_backup)
-    return {"status": "Backup and reset sequence initiated"}
+        res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
+            "fields": "id,name,status,daily_budget,insights.date_preset(today){spend,actions,impressions}",
+            "limit": "500", "access_token": ACCESS_TOKEN
+        })
+        return res.json()

@@ -1,211 +1,75 @@
-/**
- * MODULO: app.jsx
- * SISTEMA: Control Meta Pro v3.9 (Multi-Turn Edition)
- * DESCRIPCIÓN: Nombres completos, actualización masiva, gestión de congelamiento y selección múltiple de turnos con Login recuperado.
- */
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+    ShieldCheck, Cpu, RefreshCw, LogOut, Lock, Unlock,
+    Zap, ChevronDown, ChevronUp, Bell, Circle
+} from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import {
+    getFirestore, collection, doc, onSnapshot,
+    setDoc, updateDoc, getDocs, query, orderBy
+} from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
-const { useState, useEffect, useCallback, useMemo, useRef } = React;
-
-// --- COMPONENTE: ICON HELPER (Evita Error #130) ---
-const Icon = ({ name, size = 16, className = "" }) => {
-    const iconRef = useRef(null);
-    useEffect(() => {
-        if (window.lucide && window.lucide.createIcons) {
-            window.lucide.createIcons({
-                icons: { [name]: window.lucide[name] },
-                attrs: { 'stroke-width': 2, 'width': size, 'height': size, 'class': className }
-            });
-        }
-    }, [name, size, className]);
-    return <i data-lucide={name} ref={iconRef} className={className} style={{ display: 'inline-block', width: size, height: size }}></i>;
-};
+// --- CONFIGURACIÓN ---
+const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const appId = window.__app_id || 'control-meta-pro-v4';
+const API_URL = "http://localhost:8000"; // Cambiar por tu IP de VPS
 
 /**
- * COMPONENTE: Selector de Turnos Múltiples (Nuevo)
- * Permite seleccionar varios turnos para un solo conjunto.
+ * COMPONENTE: LOGIN
  */
-const MultiTurnSelect = ({ value, onChange }) => {
-    const [isOpen, setIsOpen] = useState(false);
-    const options = ["matutino", "vespertino", "fsemana"];
-    const activeTurns = value ? value.split(',').map(t => t.trim().toLowerCase()).filter(t => t !== "") : [];
-
-    const toggleTurn = (turn) => {
-        let newTurns;
-        if (activeTurns.includes(turn)) {
-            newTurns = activeTurns.filter(t => t !== turn);
-        } else {
-            newTurns = [...activeTurns, turn];
-        }
-        onChange(newTurns.join(', '));
-    };
-
-    return (
-        <div className="relative">
-            <button
-                onClick={() => setIsOpen(!isOpen)}
-                className="bg-black/50 border border-white/10 p-2.5 rounded-xl text-slate-300 w-full text-[9px] font-black uppercase tracking-widest flex items-center justify-between hover:border-blue-500 transition-all min-w-[120px]"
-            >
-                <span className="truncate">{activeTurns.length > 0 ? activeTurns.join(', ') : "Seleccionar"}</span>
-                <Icon name={isOpen ? "ChevronUp" : "ChevronDown"} size={10} />
-            </button>
-
-            {isOpen && (
-                <>
-                    <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)}></div>
-                    <div className="absolute z-50 mt-2 w-full bg-[#111] border border-white/10 rounded-2xl shadow-2xl p-3 animate-in fade-in zoom-in-95 duration-200">
-                        {options.map(opt => (
-                            <label key={opt} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer transition-colors mb-1 last:mb-0">
-                                <input
-                                    type="checkbox"
-                                    className="w-3 h-3 accent-blue-600 rounded border-white/10 bg-black"
-                                    checked={activeTurns.includes(opt)}
-                                    onChange={() => toggleTurn(opt)}
-                                />
-                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider select-none">{opt}</span>
-                            </label>
-                        ))}
-                    </div>
-                </>
-            )}
-        </div>
-    );
-};
-
-/**
- * COMPONENTE: Celda Editable de Límite (Optimista)
- */
-const EditableLimit = ({ id, initialValue, onSave }) => {
-    const [val, setVal] = useState(initialValue);
-    useEffect(() => { setVal(initialValue); }, [initialValue]);
-
-    const handleBlur = () => {
-        if (val !== initialValue) {
-            onSave(id, 'limit_perc', val);
-        }
-    };
-
-    return (
-        <input
-            type="number"
-            className="bg-black border border-white/10 w-16 p-2 rounded-lg text-center text-blue-500 font-black outline-none focus:border-blue-500 transition-all"
-            value={val}
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={handleBlur}
-        />
-    );
-};
-
-/**
- * COMPONENTE: Panel de Configuración de Turnos
- */
-const TurnConfigPanel = ({ turns, onUpdate }) => {
-    if (!turns) return null;
-
-    return (
-        <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] mb-10 shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-                <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-2">
-                    <Icon name="Settings2" size={14} /> Configuración Global de Horarios
-                </h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {Object.keys(turns).map(key => (
-                    <div key={key} className="bg-black/40 p-6 rounded-3xl border border-white/5">
-                        <p className="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-wider">{key}</p>
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between text-[11px]">
-                                <span className="text-slate-500">Inicio (H):</span>
-                                <input
-                                    type="number" step="0.5"
-                                    className="bg-transparent border-b border-white/10 w-12 text-right text-white outline-none focus:border-blue-500"
-                                    defaultValue={turns[key].start}
-                                    onBlur={(e) => onUpdate(key, 'start_hour', e.target.value)}
-                                />
-                            </div>
-                            <div className="flex items-center justify-between text-[11px]">
-                                <span className="text-slate-500">Fin (H):</span>
-                                <input
-                                    type="number" step="0.5"
-                                    className="bg-transparent border-b border-white/10 w-12 text-right text-white outline-none focus:border-blue-500"
-                                    defaultValue={turns[key].end}
-                                    onBlur={(e) => onUpdate(key, 'end_hour', e.target.value)}
-                                />
-                            </div>
-                            <div className="flex items-center justify-between text-[11px]">
-                                <span className="text-slate-500">Días:</span>
-                                <input
-                                    type="text"
-                                    className="bg-transparent border-b border-white/10 w-16 text-right text-blue-400 outline-none focus:border-blue-500"
-                                    defaultValue={turns[key].days}
-                                    onBlur={(e) => onUpdate(key, 'days', e.target.value)}
-                                />
-                            </div>
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
-/**
- * ====================================================================
- * MODULO: LOGIN SCREEN
- * ====================================================================
- */
-const LoginScreen = ({ onLogin, apiUrl }) => {
+const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
-    const [selectedAuditor, setSelectedAuditor] = useState("");
-    const [password, setPassword] = useState("");
+    const [selected, setSelected] = useState("");
+    const [pass, setPass] = useState("");
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState("");
 
     useEffect(() => {
-        const fetchAuditors = async () => {
-            try {
-                const res = await fetch(`${apiUrl}/auth/auditors`);
-                const json = await res.json();
-                setAuditors(json.auditors || []);
-                if (json.auditors?.length > 0) setSelectedAuditor(json.auditors[0]);
-            } catch (e) { setError("Fallo al conectar con Auditores."); }
-        };
-        fetchAuditors();
-    }, [apiUrl]);
+        fetch(`${API_URL}/auth/auditors`).then(r => r.json()).then(d => {
+            setAuditors(d.auditors);
+            if (d.auditors.length) setSelected(d.auditors[0]);
+        });
+    }, []);
 
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
-        try {
-            const res = await fetch(`${apiUrl}/auth/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nombre: selectedAuditor, password })
-            });
-            if (res.ok) {
-                onLogin(selectedAuditor);
-            } else {
-                setError("Credenciales incorrectas");
-            }
-        } catch (e) { setError("Error de conexión"); }
-        finally { setLoading(false); }
+        const res = await fetch(`${API_URL}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nombre: selected, password: pass })
+        });
+        if (res.ok) {
+            localStorage.setItem('session_user', selected);
+            onLogin(selected);
+        } else alert("Error de acceso");
+        setLoading(false);
     };
 
     return (
-        <div className="min-h-screen bg-[#020202] flex items-center justify-center p-6">
-            <div className="w-full max-w-md bg-[#0a0a0a] border border-white/5 p-12 rounded-[3rem] shadow-2xl text-center">
-                <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-blue-900/40 shadow-2xl">
-                    <Icon name="ShieldCheck" size={40} className="text-white" />
+        <div className="min-h-screen bg-black flex items-center justify-center p-6 font-sans">
+            <div className="w-full max-w-md bg-zinc-900 border border-white/5 p-12 rounded-[3rem] shadow-2xl text-center">
+                <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-blue-500/20">
+                    <ShieldCheck size={40} className="text-white" />
                 </div>
-                <h1 className="text-3xl font-black text-white italic uppercase tracking-tighter mb-2">Control Meta</h1>
-                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10 italic">Auditores Dashboard v3.9</p>
-                <form onSubmit={handleLogin} className="space-y-6 text-left">
-                    {error && <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl text-rose-500 text-[10px] font-black uppercase text-center">{error}</div>}
-                    <select className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white outline-none appearance-none cursor-pointer" value={selectedAuditor} onChange={e => setSelectedAuditor(e.target.value)}>
-                        {auditors.map(n => <option key={n} value={n}>{n}</option>)}
+                <h1 className="text-3xl font-black text-white italic uppercase tracking-tighter mb-10">Control Meta</h1>
+                <form onSubmit={handleLogin} className="space-y-6">
+                    <select
+                        className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none appearance-none cursor-pointer"
+                        value={selected} onChange={e => setSelected(e.target.value)}
+                    >
+                        {auditors.map(a => <option key={a} value={a}>{a}</option>)}
                     </select>
-                    <input type="password" required placeholder="Contraseña" className="w-full bg-black border border-white/10 rounded-2xl p-4 text-sm text-white focus:border-blue-500 outline-none transition-all" onChange={e => setPassword(e.target.value)} />
-                    <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white transition-all shadow-xl disabled:opacity-50">
-                        {loading ? "Verificando..." : "Ingresar al Panel"}
+                    <input
+                        type="password" placeholder="Contraseña" required
+                        className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none focus:border-blue-500 transition-all"
+                        onChange={e => setPass(e.target.value)}
+                    />
+                    <button className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white shadow-xl transition-all">
+                        {loading ? "Sincronizando..." : "Ingresar"}
                     </button>
                 </form>
             </div>
@@ -214,293 +78,268 @@ const LoginScreen = ({ onLogin, apiUrl }) => {
 };
 
 /**
- * ====================================================================
- * MODULO: DASHBOARD PRINCIPAL
- * ====================================================================
+ * COMPONENTE: DASHBOARD PRINCIPAL
  */
-const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
-    const [data, setData] = useState([]);
-    const [turns, setTurns] = useState(null);
-    const [automationActive, setAutomationActive] = useState(false);
+const Dashboard = ({ userEmail, onLogout }) => {
+    const [metaData, setMetaData] = useState([]);
+    const [settings, setSettings] = useState({});
+    const [autoState, setAutoState] = useState(false);
+    const [turns, setTurns] = useState({});
+    const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [lastSync, setLastSync] = useState(new Date());
-    const [bulkStopLoss, setBulkStopLoss] = useState("");
+    const [selectedIds, setSelectedIds] = useState([]);
+    const [bulkLimit, setBulkLimit] = useState("");
 
-    const sync = useCallback(async (silent = false) => {
-        if (!silent) setLoading(true);
-        try {
-            const res = await fetch(`${apiUrl}/ads/sync`);
-            const json = await res.json();
-            setData(json.adsets || []);
-            setTurns(json.turns);
-            setAutomationActive(json.automation_active);
-            setLastSync(new Date());
-        } catch (e) { console.error("Sync error:", e); }
-        finally { setLoading(false); }
-    }, [apiUrl]);
-
+    // Firebase Real-time Listeners
     useEffect(() => {
-        sync();
-        const interval = setInterval(() => sync(true), 300000);
-        return () => clearInterval(interval);
-    }, [sync]);
-
-    const updateSQL = (id, key, value) => {
-        setData(prev => prev.map(item =>
-            item.meta.id === id
-                ? { ...item, settings: { ...item.settings, [key]: value } }
-                : item
-        ));
-
-        fetch(`${apiUrl}/ads/settings/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id, key, value: String(value) })
-        }).catch(err => console.error(err));
-    };
-
-    const handleBulkStopLoss = () => {
-        if (!bulkStopLoss || isNaN(bulkStopLoss)) return;
-        const value = parseFloat(bulkStopLoss);
-
-        setData(prev => prev.map(item => ({
-            ...item,
-            settings: { ...item.settings, limit_perc: value }
-        })));
-
-        data.forEach(item => {
-            fetch(`${apiUrl}/ads/settings/update`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: item.meta.id, key: 'limit_perc', value: String(value) })
-            });
+        const unsubAuto = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'automation', 'state'), d => {
+            if (d.exists()) setAutoState(d.data().is_active);
         });
-        setBulkStopLoss("");
-    };
 
-    const handleResetFrozen = () => {
-        setData(prev => prev.map(item => ({
-            ...item,
-            settings: { ...item.settings, is_frozen: false }
-        })));
+        const unsubSettings = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'adsets'), s => {
+            const data = {};
+            s.forEach(doc => data[doc.id] = doc.data());
+            setSettings(data);
+        });
 
-        data.forEach(item => {
-            fetch(`${apiUrl}/ads/settings/update`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: item.meta.id, key: 'is_frozen', value: 'false' })
-            });
+        const unsubTurns = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'turns'), s => {
+            const data = {};
+            s.forEach(doc => data[doc.id] = doc.data());
+            setTurns(data);
+        });
+
+        const unsubLogs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), s => {
+            const l = [];
+            s.forEach(doc => l.push(doc.data()));
+            setLogs(l.sort((a, b) => b.time - a.time).slice(0, 5));
+        });
+
+        // Fetch Meta Inicial
+        fetch(`${API_URL}/ads/sync`).then(r => r.json()).then(d => {
+            setMetaData(d.data || []);
+            setLoading(false);
+        });
+
+        return () => { unsubAuto(); unsubSettings(); unsubTurns(); unsubLogs(); };
+    }, []);
+
+    // Lógica de Registro de Acciones (Logs)
+    const logAction = async (msg) => {
+        const logRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'));
+        await setDoc(logRef, {
+            user: userEmail,
+            msg: msg,
+            time: Date.now()
         });
     };
 
-    const toggleStatusManual = (id, currentStatus) => {
-        const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-        setData(prev => prev.map(item =>
-            item.meta.id === id ? { ...item, meta: { ...item.meta, status: nextStatus } } : item
-        ));
-
-        fetch(`${apiUrl}/ads/settings/update_meta`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id, status: nextStatus })
-        }).catch(err => console.error(err));
+    // Acciones
+    const toggleAuto = async () => {
+        const next = !autoState;
+        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'automation', 'state');
+        await setDoc(ref, { is_active: next });
+        logAction(`${next ? 'Encendió' : 'Apagó'} la automatización maestra`);
     };
 
-    const updateTurnConfig = (name, field, value) => {
-        setTurns(prev => ({
-            ...prev,
-            [name]: { ...prev[name], [field.includes('hour') ? field : 'days']: value }
-        }));
-        const turn = turns[name];
-        const payload = { ...turn, [field.includes('hour') ? field : 'days']: value, name };
-        if (field.includes('hour')) payload[field] = parseFloat(value);
-
-        fetch(`${apiUrl}/ads/turns/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        }).catch(err => console.error(err));
+    const updateAdSet = async (id, key, val) => {
+        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'adsets', id);
+        await setDoc(ref, { [key]: val }, { merge: true });
+        if (key === 'is_frozen') logAction(`${val ? 'Congeló' : 'Descongeló'} AdSet ${id}`);
     };
 
-    const toggleAutomation = () => {
-        const nextState = !automationActive;
-        setAutomationActive(nextState);
-        fetch(`${apiUrl}/ads/automation/toggle`, { method: 'POST' }).catch(() => setAutomationActive(!nextState));
+    const handleBulkLimit = async () => {
+        if (!bulkLimit || !selectedIds.length) return;
+        for (const id of selectedIds) {
+            await updateAdSet(id, 'limit_perc', parseFloat(bulkLimit));
+        }
+        logAction(`Cambió límite masivo a ${bulkLimit}% para ${selectedIds.length} conjuntos`);
+        setBulkLimit("");
+        setSelectedIds([]);
     };
 
+    // Procesamiento de Datos
     const sortedData = useMemo(() => {
-        return [...data].sort((a, b) => {
-            if (a.meta.status === 'ACTIVE' && b.meta.status !== 'ACTIVE') return -1;
-            if (a.meta.status !== 'ACTIVE' && b.meta.status === 'ACTIVE') return 1;
-            return 0;
-        });
-    }, [data]);
+        return [...metaData]
+            .filter(ad => window.__allowed_ids.includes(ad.id))
+            .sort((a, b) => (a.status === 'ACTIVE' ? -1 : 1));
+    }, [metaData]);
 
     const totals = useMemo(() => {
-        return data.reduce((acc, curr) => {
-            const ins = curr.meta.insights?.data?.[0] || {};
+        return sortedData.reduce((acc, ad) => {
+            const ins = ad.insights?.data?.[0] || {};
             acc.spend += parseFloat(ins.spend || 0);
-            acc.results += parseInt(ins.actions?.[0]?.value || 0);
+            acc.res += parseInt(ins.actions?.[0]?.value || 0);
+            if (ad.status === 'ACTIVE') acc.active++;
             return acc;
-        }, { spend: 0, results: 0 });
-    }, [data]);
+        }, { spend: 0, res: 0, active: 0 });
+    }, [sortedData]);
+
+    if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-blue-500 animate-pulse font-black uppercase tracking-widest">Sincronizando Sistema...</div>;
 
     return (
-        <div className="min-h-screen bg-[#020202] text-slate-100 p-4 lg:p-12 font-sans animate-in">
+        <div className="min-h-screen bg-[#020202] text-white p-4 lg:p-12 font-sans overflow-x-hidden">
 
-            {/* HEADER METRICS */}
-            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 mb-10">
-                <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-2xl relative overflow-hidden">
+            {/* HEADER: RESUMEN */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+                <div className="bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-2xl overflow-hidden relative group">
                     <div className="relative z-10">
                         <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1 flex items-center gap-2">
-                            <Icon name="Cpu" size={12} /> Automatización
+                            <Cpu size={12} /> Automatización
                         </h3>
-                        <p className="text-xl font-black uppercase tracking-tighter">{automationActive ? "SISTEMA ACTIVO" : "SISTEMA APAGADO"}</p>
+                        <p className="text-xl font-black uppercase italic">{autoState ? "Activa" : "Apagada"}</p>
                     </div>
                     <button
-                        onClick={toggleAutomation}
-                        className={`w-16 h-8 rounded-full p-1 transition-all relative z-10 ${automationActive ? 'bg-blue-600 shadow-[0_0_20px_rgba(37,99,235,0.4)]' : 'bg-white/10'}`}
+                        onClick={toggleAuto}
+                        className={`w-16 h-8 rounded-full p-1 transition-all relative z-10 ${autoState ? 'bg-blue-600' : 'bg-white/10'}`}
                     >
-                        <div className={`w-6 h-6 bg-white rounded-full transition-all duration-300 ${automationActive ? 'translate-x-8' : 'translate-x-0'}`} />
+                        <div className={`w-6 h-6 bg-white rounded-full transition-all duration-300 ${autoState ? 'translate-x-8' : 'translate-x-0'}`} />
                     </button>
+                    <div className={`absolute inset-0 opacity-10 transition-opacity ${autoState ? 'bg-blue-600' : ''}`} />
                 </div>
 
-                <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Inversión Hoy</p>
-                    <p className="text-2xl font-black text-white">${totals.spend.toFixed(2)}</p>
+                <div className="bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Gasto Total Hoy</p>
+                    <p className="text-2xl font-black text-white italic">${totals.spend.toFixed(2)}</p>
                 </div>
 
-                <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Resultados</p>
-                    <p className="text-2xl font-black text-white">{totals.results}</p>
+                <div className="bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Resultados</p>
+                    <p className="text-2xl font-black text-white italic">{totals.res}</p>
                 </div>
 
-                <div className="bg-[#0a0a0a] border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-xl">
+                <div className="bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-xl">
                     <div>
                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1 truncate max-w-[120px]">Auditor: {userEmail}</p>
-                        <button onClick={onLogout} className="text-[9px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-widest flex items-center gap-1">
-                            <Icon name="LogOut" size={10} /> Salir del Panel
+                        <button onClick={onLogout} className="text-[9px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-widest flex items-center gap-1 transition-all">
+                            <LogOut size={10} /> Cerrar Sesión
                         </button>
                     </div>
-                    <div className="flex flex-col items-end gap-2">
-                        <button onClick={() => sync()} className="p-3 bg-white/5 rounded-xl hover:bg-white/10">
-                            <Icon name="RefreshCw" className={loading ? "animate-spin" : ""} />
-                        </button>
-                        <p className="text-[8px] text-slate-600 font-mono italic uppercase">Sync: {lastSync.toLocaleTimeString()}</p>
-                    </div>
+                    <button onClick={() => window.location.reload()} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
+                        <RefreshCw size={18} />
+                    </button>
                 </div>
             </div>
 
-            <TurnConfigPanel turns={turns} onUpdate={updateTurnConfig} />
+            {/* ALERTAS EN TIEMPO REAL */}
+            <div className="mb-8 space-y-2">
+                {logs.map((log, i) => (
+                    <div key={i} className="flex items-center gap-3 bg-blue-600/5 border border-blue-500/10 p-3 rounded-2xl animate-in slide-in-from-top-4">
+                        <Bell size={12} className="text-blue-500" />
+                        <p className="text-[10px] font-bold uppercase tracking-wide">
+                            <span className="text-blue-400">{log.user}</span> {log.msg}
+                            <span className="text-zinc-600 ml-2 font-mono">{new Date(log.time).toLocaleTimeString()}</span>
+                        </p>
+                    </div>
+                ))}
+            </div>
 
-            {/* CONTROLES MASIVOS */}
-            <div className="flex flex-wrap items-center gap-4 mb-6 bg-[#0a0a0a] p-6 rounded-[2rem] border border-white/5 shadow-lg">
-                <div className="flex items-center gap-3">
-                    <div className="bg-blue-600/10 p-2 rounded-lg"><Icon name="Zap" className="text-blue-500" size={14} /></div>
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Acciones en Masa:</span>
-                </div>
-
-                <div className="flex items-center gap-2 bg-black/40 p-2 px-4 rounded-xl border border-white/5 ml-4">
-                    <span className="text-[9px] font-bold text-slate-500 uppercase">Stop-Loss General:</span>
+            {/* PANEL DE ACCIONES MASIVAS */}
+            <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-[2rem] mb-10 flex flex-wrap items-center gap-6">
+                <div className="flex items-center gap-2 bg-black p-3 px-6 rounded-2xl border border-white/10">
+                    <Zap size={14} className="text-blue-500" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Acción Grupal:</span>
                     <input
-                        type="number"
-                        className="bg-transparent text-blue-500 font-black text-xs w-12 outline-none border-b border-white/10 text-center"
-                        placeholder="%"
-                        value={bulkStopLoss}
-                        onChange={(e) => setBulkStopLoss(e.target.value)}
+                        type="number" placeholder="Límite %"
+                        className="bg-zinc-800 border-none w-16 p-1 text-center text-xs rounded-lg outline-none text-blue-500 font-bold"
+                        value={bulkLimit} onChange={e => setBulkLimit(e.target.value)}
                     />
                     <button
                         onClick={handleBulkStopLoss}
-                        className="bg-blue-600 hover:bg-blue-500 text-[9px] font-black px-3 py-1 rounded-md transition-all uppercase"
+                        className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded-lg uppercase tracking-widest hover:bg-blue-500 transition-all"
                     >
-                        Aplicar a todos
+                        Aplicar a {selectedIds.length}
                     </button>
                 </div>
-
                 <button
-                    onClick={handleResetFrozen}
-                    className="bg-white/5 hover:bg-white/10 border border-white/10 text-[9px] font-black px-6 py-2.5 rounded-xl uppercase tracking-widest flex items-center gap-2 transition-all"
+                    onClick={() => { setSelectedIds([]); handleResetFrozen(); }}
+                    className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 px-6 py-4 rounded-2xl border border-white/5 transition-all text-[10px] font-black uppercase tracking-widest"
                 >
-                    <Icon name="Unlock" size={12} /> Descongelar Todo (Reset Diario)
+                    <Unlock size={14} /> Reset Nocturno (Manual)
                 </button>
             </div>
 
-            {/* TABLA DE CONTROL SQL */}
-            <div className="bg-[#0a0a0a] border border-white/5 rounded-[3rem] shadow-2xl overflow-hidden mb-20">
+            {/* TABLA: ADSETS */}
+            <div className="bg-zinc-900 border border-white/5 rounded-[3rem] shadow-2xl overflow-hidden mb-20">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead>
-                            <tr className="bg-black/50 text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] border-b border-white/5">
+                            <tr className="bg-black/50 text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] border-b border-white/5">
+                                <th className="p-6">Sel.</th>
                                 <th className="p-6">Estado</th>
-                                <th className="p-6 min-w-[300px]">Nombre del AdSet</th>
+                                <th className="p-6 min-w-[350px]">Nombre del AdSet</th>
                                 <th className="p-6 text-center">Ppto</th>
                                 <th className="p-6 text-center">Gasto Hoy</th>
                                 <th className="p-6 text-center text-blue-500">Stop-Loss %</th>
-                                <th className="p-6 text-center">Result.</th>
-                                <th className="p-6">Turno (Múltiple)</th>
-                                <th className="p-6 text-center">Congelado</th>
-                                <th className="p-6 text-center">Manual</th>
+                                <th className="p-6 text-center">Res.</th>
+                                <th className="p-6">Turno</th>
+                                <th className="p-6 text-center">Control</th>
                             </tr>
                         </thead>
                         <tbody className="text-xs">
-                            {sortedData.map(item => {
-                                const { meta, settings } = item;
-                                const ins = meta.insights?.data?.[0] || {};
-                                const ppto = (parseFloat(meta.daily_budget || 0) / 100);
+                            {sortedData.map(ad => {
+                                const s = settings[ad.id] || { turno: "matutino", limit_perc: 50.0, is_frozen: false };
+                                const ins = ad.insights?.data?.[0] || {};
+                                const budget = parseFloat(ad.daily_budget || 0) / 100;
                                 const spend = parseFloat(ins.spend || 0);
-                                const perc = ppto > 0 ? (spend / ppto) * 100 : 0;
-                                const isOverLimit = perc >= settings.limit_perc;
+                                const perc = budget > 0 ? (spend / budget * 100) : 0;
+                                const isOver = perc >= s.limit_perc;
 
                                 return (
-                                    <tr key={meta.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors group">
+                                    <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.02] transition-all group ${s.is_frozen ? 'opacity-60' : ''}`}>
                                         <td className="p-6">
-                                            <div className="flex items-center gap-3">
-                                                <div className={`w-3 h-3 rounded-full transition-all duration-300 ${meta.status === 'ACTIVE' ? 'bg-emerald-500 shadow-[0_0_12px_#10b981]' : 'bg-rose-500/30'}`} />
-                                                <span className="font-bold text-slate-500 uppercase text-[9px] tracking-widest">{meta.status}</span>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.includes(ad.id)}
+                                                onChange={(e) => {
+                                                    if (e.target.checked) setSelectedIds([...selectedIds, ad.id]);
+                                                    else setSelectedIds(selectedIds.filter(id => id !== ad.id));
+                                                }}
+                                                className="w-4 h-4 accent-blue-600"
+                                            />
+                                        </td>
+                                        <td className="p-6">
+                                            <div className="flex items-center gap-2">
+                                                <Circle size={8} fill={ad.status === 'ACTIVE' ? '#10b981' : '#f43f5e'} className={ad.status === 'ACTIVE' ? 'text-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'text-rose-500'} />
+                                                <span className="font-bold text-[10px] uppercase text-zinc-500">{ad.status}</span>
                                             </div>
                                         </td>
                                         <td className="p-6">
-                                            <p className="font-bold text-white uppercase tracking-tight group-hover:text-blue-400 transition-colors leading-relaxed">{meta.name}</p>
-                                            <p className="text-[9px] text-slate-600 font-mono mt-1 italic">ID: {meta.id}</p>
+                                            <p className="font-black text-white uppercase leading-relaxed text-sm break-words">{ad.name}</p>
+                                            <p className="text-[9px] text-zinc-600 font-mono mt-1 italic">ID: {ad.id}</p>
                                         </td>
-                                        <td className="p-6 text-center font-bold text-slate-300">
-                                            ${ppto.toFixed(0)}
+                                        <td className="p-6 text-center font-bold text-zinc-400">
+                                            ${budget.toFixed(0)}
                                         </td>
                                         <td className="p-6 text-center">
-                                            <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${isOverLimit ? 'bg-rose-500/20 text-rose-500' : 'bg-blue-500/10 text-blue-400'}`}>
+                                            <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${isOver ? 'bg-rose-500/20 text-rose-500 border border-rose-500/30' : 'bg-blue-500/10 text-blue-400'}`}>
                                                 ${spend.toFixed(2)} <span className="text-[9px] opacity-60 ml-1">({perc.toFixed(0)}%)</span>
                                             </div>
                                         </td>
                                         <td className="p-6 text-center">
-                                            <EditableLimit
-                                                id={meta.id}
-                                                initialValue={settings.limit_perc}
-                                                onSave={updateSQL}
+                                            <input
+                                                type="number"
+                                                className="bg-black border border-white/10 w-16 p-2 rounded-lg text-center text-blue-500 font-black outline-none focus:border-blue-500 transition-all"
+                                                value={s.limit_perc}
+                                                onChange={e => updateAdSet(ad.id, 'limit_perc', parseFloat(e.target.value))}
                                             />
                                         </td>
                                         <td className="p-6 text-center font-black text-white text-base">
                                             {ins.actions?.[0]?.value || 0}
                                         </td>
                                         <td className="p-6">
-                                            <MultiTurnSelect
-                                                value={settings.turno}
-                                                onChange={(val) => updateSQL(meta.id, 'turno', val)}
+                                            <input
+                                                type="text"
+                                                className="bg-black/50 border border-white/10 p-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-300 w-32 outline-none"
+                                                value={s.turno}
+                                                onChange={e => updateAdSet(ad.id, 'turno', e.target.value)}
                                             />
                                         </td>
                                         <td className="p-6 text-center">
                                             <button
-                                                onClick={() => updateSQL(meta.id, 'is_frozen', !settings.is_frozen)}
-                                                className={`p-3 rounded-xl transition-all duration-200 ${settings.is_frozen ? 'bg-blue-600 text-white shadow-lg' : 'bg-white/5 text-slate-700 hover:text-white'}`}
+                                                onClick={() => updateAdSet(ad.id, 'is_frozen', !s.is_frozen)}
+                                                className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 text-white shadow-lg' : 'bg-white/5 text-zinc-700 hover:text-white'}`}
                                             >
-                                                <Icon name={settings.is_frozen ? "Lock" : "Unlock"} size={16} />
-                                            </button>
-                                        </td>
-                                        <td className="p-6 text-center">
-                                            <button
-                                                onClick={() => toggleStatusManual(meta.id, meta.status)}
-                                                className={`w-11 h-6 rounded-full p-1 transition-all duration-300 ${meta.status === 'ACTIVE' ? 'bg-blue-600' : 'bg-white/10'}`}
-                                            >
-                                                <div className={`w-4 h-4 bg-white rounded-full transition-all duration-300 ${meta.status === 'ACTIVE' ? 'translate-x-5' : 'translate-x-0'}`} />
+                                                {s.is_frozen ? <Lock size={16} /> : <Unlock size={16} />}
                                             </button>
                                         </td>
                                     </tr>
@@ -514,26 +353,26 @@ const Dashboard = ({ userEmail, onLogout, apiUrl }) => {
     );
 };
 
+// --- APP ENTRY ---
 const App = () => {
-    const [session, setSession] = useState(localStorage.getItem('meta_auditor_session'));
-    const API_URL = "https://manejoapi.libresdeumas.com";
+    const [session, setSession] = useState(localStorage.getItem('session_user'));
 
-    const handleLogout = () => {
-        localStorage.removeItem('meta_auditor_session');
-        setSession(null);
-    };
+    useEffect(() => {
+        // Definimos IDs Permitidos Globalmente para el filtro
+        window.__allowed_ids = [
+            "120238886501840717", "120238886472900717", "120238886429400717",
+            "120238886420220717", "120238886413960717", "120238886369210717",
+            "120234721717970717", "120234721717960717", "120234721717990717",
+            "120233618279570717", "120233618279540717", "120233611687810717",
+            "120232204774610717", "120232204774590717", "120232204774570717",
+            "120232157515490717", "120232157515480717", "120232157515460717"
+        ];
 
-    const handleLogin = (user) => {
-        localStorage.setItem('meta_auditor_session', user);
-        setSession(user);
-    };
+        signInAnonymously(auth);
+    }, []);
 
-    return !session ? (
-        <LoginScreen onLogin={handleLogin} apiUrl={API_URL} />
-    ) : (
-        <Dashboard userEmail={session} onLogout={handleLogout} apiUrl={API_URL} />
-    );
+    if (!session) return <LoginScreen onLogin={setSession} />;
+    return <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
 };
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+export default App;
