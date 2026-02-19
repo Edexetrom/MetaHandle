@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, String, Float, Boolean, Integer, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -51,12 +53,32 @@ class ActionLog(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# --- CONSTANTES Y CACHÉ ---
+# --- CONSTANTES ---
 META_ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
 META_AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
+SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
 API_VERSION = "v21.0"
 
 meta_cache: Dict[str, Any] = {"data": None, "timestamp": 0}
+
+# --- UTILIDADES GOOGLE SHEETS ---
+def get_google_creds():
+    try:
+        creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+        if creds_b64:
+            info = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+        else:
+            info = {
+                "type": "service_account",
+                "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
+                "private_key": os.environ.get("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+                "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        return service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+    except Exception as e:
+        logging.error(f"Creds Error: {e}")
+        return None
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -76,15 +98,10 @@ async def startup_event():
     db.commit(); db.close()
     asyncio.create_task(automation_engine())
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    await app.state.client.aclose()
-
 async def get_meta_data_cached():
     curr_time = time.time()
     if meta_cache["data"] and (curr_time - meta_cache["timestamp"] < 10):
         return meta_cache["data"]
-    
     url = f"https://graph.facebook.com/{API_VERSION}/{META_AD_ACCOUNT_ID}/adsets"
     params = {"fields": "id,name,status,daily_budget,insights.date_preset(today){spend,actions}", "access_token": META_ACCESS_TOKEN, "limit": "500"}
     try:
@@ -93,10 +110,9 @@ async def get_meta_data_cached():
         meta_cache["data"] = data
         meta_cache["timestamp"] = curr_time
         return data
-    except:
-        return meta_cache["data"] or []
+    except: return meta_cache["data"] or []
 
-# --- MOTOR DE REGLAS ---
+# --- MOTOR DE AUTOMATIZACIÓN ---
 async def automation_engine():
     while True:
         await asyncio.sleep(45)
@@ -104,26 +120,19 @@ async def automation_engine():
         try:
             state = db.query(AutomationState).first()
             if not state or not state.is_active: continue
-
             mex_tz = pytz.timezone('America/Mexico_City')
             now = datetime.now(mex_tz)
             curr_h = now.hour + (now.minute / 60)
-            
             turns = {t.name.lower(): t for t in db.query(TurnConfig).all()}
             meta_data = await get_meta_data_cached()
-
             for ad in meta_data:
                 s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
                 if not s or s.is_frozen: continue
-
                 assigned = [t.strip().lower() for t in s.turno.split(",")]
                 in_time = any(turns.get(t) and turns[t].start_hour <= curr_h < turns[t].end_hour for t in assigned)
-                
-                insights = ad.get("insights", {}).get("data", [{}])
-                spend = float(insights[0].get("spend", 0)) if insights else 0
+                spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0)) if ad.get("insights") else 0
                 budget = float(ad.get("daily_budget", 0)) / 100
                 over = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
-
                 should_be_active = in_time and not over
                 if should_be_active and ad['status'] != 'ACTIVE':
                     await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "ACTIVE", "access_token": META_ACCESS_TOKEN})
@@ -132,7 +141,7 @@ async def automation_engine():
         except: pass
         finally: db.close()
 
-# --- API ENDPOINTS ---
+# --- ENDPOINTS ---
 
 @app.get("/ads/sync")
 async def sync_data():
@@ -157,7 +166,7 @@ async def update_meta_status(req: dict):
         db = SessionLocal()
         db.add(ActionLog(user=req['user'], msg=f"Manual: {req['status']} en {req['id']}"))
         db.commit(); db.close()
-        meta_cache["timestamp"] = 0 
+        meta_cache["timestamp"] = 0
         return {"ok": True}
     return {"ok": False}
 
@@ -170,7 +179,6 @@ async def update_setting(req: dict):
         if 'limit_perc' in req: s.limit_perc = float(req['limit_perc'])
         if 'turno' in req: s.turno = req['turno']
         if 'is_frozen' in req: s.is_frozen = bool(req['is_frozen'])
-        if 'log' in req: db.add(ActionLog(user=req['user'], msg=req['log']))
         db.commit(); return {"ok": True}
     finally: db.close()
 
@@ -182,7 +190,6 @@ async def bulk_update(req: dict):
             s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
             if not s: s = AdSetSetting(id=sid); db.add(s)
             s.limit_perc = float(req['limit_perc'])
-        db.add(ActionLog(user=req['user'], msg=f"Masivo: {req['limit_perc']}% a {len(req['ids'])} conjuntos"))
         db.commit(); return {"ok": True}
     finally: db.close()
 
@@ -208,12 +215,25 @@ async def toggle_auto(req: dict):
 
 @app.get("/auth/auditors")
 async def get_auditors():
-    # En producción esto se conecta con Google Sheets o DB
-    return {"auditors": ["Auditor Principal", "Auditor 2"]}
+    creds = get_google_creds()
+    if not creds: return {"auditors": ["Auditor Maestro"]}
+    try:
+        service = build('sheets', 'v4', credentials=creds)
+        res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+        values = res.get('values', [])
+        return {"auditors": [row[0] for row in values[1:] if row]}
+    except: return {"auditors": ["Error al cargar"]}
 
 @app.post("/auth/login")
 async def login(req: dict):
-    # Credenciales de respaldo v2.20
-    if req['nombre'] in ["Auditor Principal", "Auditor 2"] and req['password'] == "1234":
-        return {"user": req['nombre']}
-    raise HTTPException(401, "Contraseña incorrecta")
+    creds = get_google_creds()
+    if not creds: raise HTTPException(401, "Configuración incompleta")
+    try:
+        service = build('sheets', 'v4', credentials=creds)
+        res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+        values = res.get('values', [])
+        for row in values[1:]:
+            if row[0] == req['nombre'] and str(row[1]) == str(req['password']):
+                return {"user": row[0]}
+        raise HTTPException(401, "Credenciales inválidas")
+    except: raise HTTPException(500, "Error de validación")
