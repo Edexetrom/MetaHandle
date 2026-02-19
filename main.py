@@ -53,17 +53,33 @@ class ActionLog(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# --- CONFIGURACIÓN META ---
+# --- CONFIGURACIÓN META Y GOOGLE ---
 META_ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
 META_AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
+SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
 API_VERSION = "v21.0"
 
-# --- MOTOR DE AUTOMATIZACIÓN ---
+def get_google_creds():
+    try:
+        creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+        if creds_b64:
+            info = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+        else:
+            info = {
+                "type": os.environ.get("GOOGLE_TYPE"),
+                "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
+                "private_key": os.environ.get("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+                "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        return service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+    except: return None
+
+# --- MOTOR DE AUTOMATIZACIÓN (Punto 18) ---
 async def automation_engine():
-    # Timeout extendido para Meta API
     timeout_meta = httpx.Timeout(60.0, read=60.0)
     while True:
-        await asyncio.sleep(120) 
+        await asyncio.sleep(60) # Revisa cada minuto
         db = SessionLocal()
         try:
             state = db.query(AutomationState).first()
@@ -72,9 +88,10 @@ async def automation_engine():
             mex_tz = pytz.timezone('America/Mexico_City')
             now = datetime.now(mex_tz)
             curr_h = now.hour + (now.minute / 60)
-            
-            # Reset nocturno (00:00 CDMX)
-            if now.hour == 0 and now.minute < 3:
+            curr_day = now.weekday() # 0=Lunes
+
+            # Reset nocturno (Punto 8)
+            if now.hour == 0 and now.minute < 2:
                 db.query(AdSetSetting).update({"is_frozen": False})
                 db.commit()
 
@@ -90,15 +107,21 @@ async def automation_engine():
                     s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
                     if not s or s.is_frozen: continue
 
-                    assigned_turns = [t.strip().lower() for t in s.turno.split(",")]
-                    in_time = any(turns.get(t) and turns[t].start_hour <= curr_h < turns[t].end_hour for t in assigned_turns)
+                    # Lógica de Turnos (Punto 4)
+                    assigned = [t.strip().lower() for t in s.turno.split(",")]
+                    in_time = False
+                    for t_name in assigned:
+                        t_cfg = turns.get(t_name)
+                        if t_cfg:
+                            # Simplificación de días: L-V
+                            if "L-V" in t_cfg.days and curr_day <= 4:
+                                if t_cfg.start_hour <= curr_h < t_cfg.end_hour: in_time = True
                     
                     spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0))
                     budget = float(ad.get("daily_budget", 0)) / 100
-                    over_budget = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
+                    over_limit = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
 
-                    should_be_active = in_time and not over_budget
-                    
+                    should_be_active = in_time and not over_limit
                     if should_be_active and ad['status'] != 'ACTIVE':
                         await client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "ACTIVE", "access_token": META_ACCESS_TOKEN})
                     elif not should_be_active and ad['status'] == 'ACTIVE':
@@ -115,9 +138,30 @@ async def startup():
     db = SessionLocal()
     if not db.query(AutomationState).first():
         db.add(AutomationState(id=1, is_active=False))
-        db.commit()
+        db.add_all([
+            TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
+            TurnConfig(name="vespertino", start_hour=13.0, end_hour=21.0, days="L-V")
+        ])
+    db.commit()
     db.close()
     asyncio.create_task(automation_engine())
+
+@app.get("/auth/auditors")
+async def get_auditors():
+    creds = get_google_creds()
+    service = build('sheets', 'v4', credentials=creds)
+    res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+    return {"auditors": [row[0] for row in res.get('values', [])[1:] if row]}
+
+@app.post("/auth/login")
+async def login(req: dict):
+    creds = get_google_creds()
+    service = build('sheets', 'v4', credentials=creds)
+    res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+    for row in res.get('values', [])[1:]:
+        if row[0] == req['nombre'] and row[1] == req['password']:
+            return {"user": row[0]}
+    raise HTTPException(401)
 
 @app.get("/ads/sync")
 async def sync_data():
@@ -133,12 +177,10 @@ async def sync_data():
         settings = {s.id: {"limit_perc": s.limit_perc, "turno": s.turno, "is_frozen": s.is_frozen} for s in db.query(AdSetSetting).all()}
         turns = {t.name: {"start": t.start_hour, "end": t.end_hour, "days": t.days} for t in db.query(TurnConfig).all()}
         auto = db.query(AutomationState).first()
-        logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(15).all()
+        logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(10).all()
         
         return {
-            "meta": meta,
-            "settings": settings,
-            "turns": turns,
+            "meta": meta, "settings": settings, "turns": turns,
             "automation_active": auto.is_active if auto else False,
             "logs": [{"user": l.user, "msg": l.msg, "time": l.time.strftime("%H:%M:%S")} for l in logs]
         }
@@ -146,12 +188,12 @@ async def sync_data():
 
 @app.post("/ads/meta-status")
 async def update_meta_status(req: dict):
-    # Control manual directo en Meta
+    # Punto 2/3: Apagado/Encendido manual sincronizado
     async with httpx.AsyncClient(timeout=30.0) as client:
         res = await client.post(f"https://graph.facebook.com/{API_VERSION}/{req['id']}", params={"status": req['status'], "access_token": META_ACCESS_TOKEN})
         if res.status_code == 200:
             db = SessionLocal()
-            db.add(ActionLog(user=req['user'], msg=f"Cambio manual {req['status']} en ID {req['id']}"))
+            db.add(ActionLog(user=req['user'], msg=f"Cambio manual a {req['status']} en ID {req['id']}"))
             db.commit()
             db.close()
             return {"ok": True}
@@ -163,8 +205,7 @@ async def update_setting(req: dict):
     try:
         s = db.query(AdSetSetting).filter(AdSetSetting.id == req['id']).first()
         if not s:
-            s = AdSetSetting(id=req['id'])
-            db.add(s)
+            s = AdSetSetting(id=req['id']); db.add(s)
         if 'limit_perc' in req: s.limit_perc = float(req['limit_perc'])
         if 'turno' in req: s.turno = req['turno']
         if 'is_frozen' in req: s.is_frozen = bool(req['is_frozen'])
@@ -180,8 +221,7 @@ async def bulk_update(req: dict):
         for sid in req['ids']:
             s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
             if not s:
-                s = AdSetSetting(id=sid)
-                db.add(s)
+                s = AdSetSetting(id=sid); db.add(s)
             s.limit_perc = float(req['limit_perc'])
         db.add(ActionLog(user=req['user'], msg=f"Ajuste masivo {req['limit_perc']}% a {len(req['ids'])} adsets"))
         db.commit()
@@ -193,12 +233,8 @@ async def update_turn(req: dict):
     db = SessionLocal()
     try:
         t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
-        if not t:
-            t = TurnConfig(name=req['name'])
-            db.add(t)
-        t.start_hour = float(req['start'])
-        t.end_hour = float(req['end'])
-        t.days = req['days']
+        if not t: t = TurnConfig(name=req['name']); db.add(t)
+        t.start_hour, t.end_hour, t.days = float(req['start']), float(req['end']), req['days']
         db.commit()
         return {"ok": True}
     finally: db.close()

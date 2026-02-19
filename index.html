@@ -4,70 +4,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meta Ads Control Pro v4.5</title>
-    <link rel="icon" href="data:,">
-
-    <!-- Scripts Base -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Meta Ads Pro Controller</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-
-    <!-- Firebase SDK (Compat Version) -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
 
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #020202;
-            color: white;
-            margin: 0;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 10px;
         }
 
         .animate-fade-in {
-            animation: fadeIn 0.3s ease-out;
+            animation: fadeIn 0.5s ease-out;
         }
 
         @keyframes fadeIn {
             from {
                 opacity: 0;
-                transform: translateY(10px);
             }
 
             to {
                 opacity: 1;
-                transform: translateY(0);
             }
-        }
-
-        ::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: #000;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #333;
-            border-radius: 10px;
         }
     </style>
 </head>
 
-<body>
+<body class="bg-black">
     <div id="root"></div>
-    <!-- Configuración Inyectada -->
-    <script>
-        // Estos valores deben ser reemplazados por el servidor o puestos manualmente
-        window.__firebase_config = '{"apiKey": "...", "projectId": "...", "appId": "..."}';
-        window.__app_id = "control-meta-pro-v4";
-    </script>
     <script type="text/babel" src="app.jsx"></script>
 </body>
 
