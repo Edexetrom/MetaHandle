@@ -1,18 +1,13 @@
 /**
- * SISTEMA: Control Meta Pro v6.1 (SQLite Only)
- * FIX: Error 'exports is not defined' y 'App not defined'.
- * DINAMISMO: Solo el icono de carga gira.
- * FUNCIONES: Control manual de Meta, Gestión de Turnos y Edición Grupal.
+ * ARCHIVO: app.jsx
+ * Versión 6.1 - SQLite Polling, Control Manual y Fix de Iconos.
  */
-const { useState, useEffect, useMemo, useRef } = React;
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-// --- COMPONENTE: ICONOS (Manejo Seguro de Lucide) ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
-
     useEffect(() => {
         if (window.lucide && iconRef.current) {
-            // Limpiamos para evitar duplicidad de SVGs en re-renders de tablas
             iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
             window.lucide.createIcons({
                 attrs: {
@@ -20,19 +15,11 @@ const Icon = ({ name, size = 16, className = "", spin = false }) => {
                     'width': size,
                     'height': size,
                     'class': `${className} ${spin ? 'animate-spin' : ''}`.trim()
-                },
-                nameAttr: 'data-lucide'
+                }
             });
         }
     }, [name, size, className, spin]);
-
-    return (
-        <span
-            ref={iconRef}
-            className="inline-flex items-center justify-center pointer-events-none"
-            style={{ width: size, height: size }}
-        />
-    );
+    return <span ref={iconRef} className="inline-flex items-center justify-center"></span>;
 };
 
 const API_URL = "https://manejoapi.libresdeumas.com";
@@ -46,56 +33,6 @@ const ALLOWED_IDS = [
     "120232157515490717", "120232157515480717", "120232157515460717"
 ];
 
-const LoginScreen = ({ onLogin }) => {
-    const [auditors, setAuditors] = useState([]);
-    const [selected, setSelected] = useState("");
-    const [pass, setPass] = useState("");
-    const [loading, setLoading] = useState(false);
-
-    useEffect(() => {
-        fetch(`${API_URL}/auth/auditors`).then(r => r.json()).then(d => {
-            setAuditors(d.auditors || []);
-            if (d.auditors?.length) setSelected(d.auditors[0]);
-        }).catch(e => console.error("Error auditores", e));
-    }, []);
-
-    const handleLogin = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        try {
-            const res = await fetch(`${API_URL}/auth/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nombre: selected, password: pass })
-            });
-            if (res.ok) {
-                const user = await res.json();
-                localStorage.setItem('session_user', user.user);
-                onLogin(user.user);
-            } else alert("Credenciales incorrectas");
-        } catch (e) { alert("Error de conexión"); }
-        finally { setLoading(false); }
-    };
-
-    return (
-        <div className="min-h-screen flex items-center justify-center bg-black p-4">
-            <div className="w-full max-w-sm bg-zinc-900 p-10 rounded-[3rem] border border-white/5 text-center shadow-2xl">
-                <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-500/20">
-                    <Icon name="shield-check" size={32} className="text-white" />
-                </div>
-                <h1 className="text-2xl font-black text-white italic uppercase mb-8">Control Meta</h1>
-                <form onSubmit={handleLogin} className="space-y-4 text-left">
-                    <select className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none appearance-none cursor-pointer" value={selected} onChange={e => setSelected(e.target.value)}>
-                        {auditors.map(a => <option key={a} value={a}>{a}</option>)}
-                    </select>
-                    <input type="password" placeholder="Contraseña" required className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none focus:border-blue-500 transition-all" onChange={e => setPass(e.target.value)} />
-                    <button className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase text-white hover:bg-blue-500 shadow-xl transition-all">Ingresar</button>
-                </form>
-            </div>
-        </div>
-    );
-};
-
 const Dashboard = ({ userEmail, onLogout }) => {
     const [data, setData] = useState({ meta: [], settings: {}, turns: {}, automation_active: false, logs: [] });
     const [selectedIds, setSelectedIds] = useState([]);
@@ -104,7 +41,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
     const [showLogs, setShowLogs] = useState(false);
     const [view, setView] = useState('panel');
 
-    const fetchSync = async (silent = false) => {
+    const fetchSync = useCallback(async (silent = false) => {
         if (!silent) setSyncing(true);
         try {
             const res = await fetch(`${API_URL}/ads/sync`);
@@ -112,13 +49,13 @@ const Dashboard = ({ userEmail, onLogout }) => {
             setData(json);
         } catch (e) { console.error("Sync Error", e); }
         finally { if (!silent) setSyncing(false); }
-    };
+    }, []);
 
     useEffect(() => {
         fetchSync();
         const interval = setInterval(() => fetchSync(true), 30000);
         return () => clearInterval(interval);
-    }, []);
+    }, [fetchSync]);
 
     const toggleMetaStatus = async (id, currentStatus) => {
         const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
@@ -130,8 +67,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 body: JSON.stringify({ id, status: nextStatus, user: userEmail })
             });
             await fetchSync(true);
-        } catch (e) { alert("Error al conectar con Meta"); }
-        finally { setSyncing(false); }
+        } finally { setSyncing(false); }
     };
 
     const updateSetting = async (id, key, val, logMsg = null) => {
@@ -180,16 +116,13 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
     return (
         <div className="min-h-screen bg-[#020202] text-white p-4 lg:p-10 font-sans italic tracking-tight">
-
-            {/* HEADER STATISTICS */}
+            {/* HEADER */}
             <header className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between shadow-xl">
                     <div><p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Automatización</p><p className="text-xl font-black uppercase tracking-tighter">{data.automation_active ? 'Activa' : 'Apagada'}</p></div>
                     <button
                         onClick={async () => {
-                            const res = await fetch(`${API_URL}/ads/automation/toggle`, {
-                                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: userEmail })
-                            });
+                            const res = await fetch(`${API_URL}/ads/automation/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: userEmail }) });
                             const json = await res.json();
                             setData(prev => ({ ...prev, automation_active: json.is_active }));
                         }}
@@ -207,24 +140,24 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     <p className="text-2xl font-black uppercase tracking-tighter">{stats.r}</p>
                 </div>
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between">
-                    <div className="truncate"><p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">Auditor</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
+                    <div className="truncate text-left"><p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">Auditor</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
                     <div className="flex gap-2">
-                        <button onClick={() => setShowLogs(!showLogs)} className="relative p-2 bg-white/5 rounded-xl hover:bg-white/10 transition-all">
-                            <Icon name="bell" size={18} className={data.logs.length > 0 ? "text-blue-500" : "text-zinc-500"} />
+                        <button onClick={() => setShowLogs(!showLogs)} className="relative p-2 bg-white/5 rounded-xl transition-all">
+                            <Icon name="Bell" size={18} className={data.logs.length > 0 ? "text-blue-500" : "text-zinc-500"} />
                             {data.logs.length > 0 && <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full animate-ping"></span>}
                         </button>
-                        <button onClick={onLogout} className="p-2 text-rose-600 hover:text-rose-400"><Icon name="log-out" size={18} /></button>
+                        <button onClick={onLogout} className="p-2 text-rose-600 hover:text-rose-400 transition-all"><Icon name="LogOut" size={18} /></button>
                     </div>
                 </div>
             </header>
 
-            {/* LOGS PANEL */}
+            {/* MODAL LOGS */}
             {showLogs && (
                 <div className="fixed inset-0 z-50 flex items-start justify-end p-10 pointer-events-none">
                     <div className="w-80 bg-zinc-900 border border-white/10 rounded-[2rem] shadow-2xl p-6 pointer-events-auto animate-fade-in">
                         <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
-                            <h3 className="text-[10px] font-black uppercase tracking-widest text-blue-500">Notificaciones</h3>
-                            <button onClick={() => setShowLogs(false)}><Icon name="x" size={14} /></button>
+                            <h3 className="text-[10px] font-black uppercase tracking-widest text-blue-500">Actividad</h3>
+                            <button onClick={() => setShowLogs(false)}><Icon name="X" size={14} /></button>
                         </div>
                         <div className="space-y-3 max-h-[400px] overflow-y-auto">
                             {data.logs.map((l, i) => (
@@ -238,43 +171,42 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             )}
 
-            {/* NAV AND SYNC ICON (Only Refresh Spins) */}
+            {/* NAV */}
             <div className="flex gap-4 mb-6">
-                <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
-                <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
-                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all border border-white/5 shadow-xl">
-                    <Icon name="refresh-cw" spin={syncing} size={16} className="text-blue-500" />
+                <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
+                <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
+                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl border border-white/5">
+                    <Icon name="RefreshCw" spin={syncing} size={16} className="text-blue-500" />
                 </button>
             </div>
 
             {view === 'panel' ? (
                 <>
-                    {/* BULK ACTIONS */}
-                    <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl animate-fade-in">
+                    {/* BULK */}
+                    <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
-                            <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
+                            <Icon name="Zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
                             <input type="number" className="bg-zinc-800 w-16 p-1 text-center text-xs rounded outline-none text-blue-500 font-bold" value={bulkLimit} onChange={e => setBulkLimit(e.target.value)} />
                             <button onClick={handleBulkAction} className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded uppercase hover:bg-blue-500 transition-all">Aplicar a {selectedIds.length}</button>
                         </div>
                         <button onClick={async () => {
-                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Reset de congelados" }) });
+                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Reset masivo" }) });
                             fetchSync(true);
                         }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest">Descongelar Todos</button>
                     </div>
 
-                    {/* MAIN TABLE */}
                     <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
                                 <thead>
                                     <tr className="bg-black text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em] border-b border-white/5">
                                         <th className="p-6">Sel.</th>
-                                        <th className="p-6">LED / Manual</th>
+                                        <th className="p-6">Manual / LED</th>
                                         <th className="p-6 min-w-[350px]">Nombre Completo del AdSet</th>
                                         <th className="p-6 text-center">Inversión</th>
                                         <th className="p-6 text-center text-blue-500">Stop %</th>
                                         <th className="p-6 text-center">Resultados</th>
-                                        <th className="p-6">Turno</th>
+                                        <th className="p-6">Tag Turno</th>
                                         <th className="p-6 text-center">Freeze</th>
                                     </tr>
                                 </thead>
@@ -293,12 +225,11 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                     <input type="checkbox" className="accent-blue-600 w-4 h-4 cursor-pointer" checked={selectedIds.includes(ad.id)} onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))} />
                                                 </td>
                                                 <td className="p-6">
-                                                    {/* LED BRIGHT/OPAQUE + MANUAL TOGGLE */}
                                                     <div className="flex items-center gap-3">
-                                                        <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/40 border border-rose-500/20'}`}></div>
+                                                        <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/30 border border-rose-500/10'}`}></div>
                                                         <button
                                                             onClick={() => toggleMetaStatus(ad.id, ad.status)}
-                                                            className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/10'}`}
+                                                            className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg'}`}
                                                         >
                                                             {active ? 'Pausar' : 'Activar'}
                                                         </button>
@@ -311,15 +242,15 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                     </div>
                                                 </td>
                                                 <td className="p-6 text-center">
-                                                    <input type="number" className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none" value={s.limit_perc} onBlur={(e) => updateSetting(ad.id, 'limit_perc', parseFloat(e.target.value), `PPTO: ${e.target.value}% en ${ad.id}`)} />
+                                                    <input type="number" className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none" value={s.limit_perc} onBlur={(e) => updateSetting(ad.id, 'limit_perc', parseFloat(e.target.value), `Cambió límite a ${e.target.value}%`)} />
                                                 </td>
                                                 <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
                                                 <td className="p-6">
                                                     <input type="text" className="bg-black/50 border border-white/10 p-2 rounded-xl text-[10px] font-black uppercase text-zinc-400 w-32 outline-none" defaultValue={s.turno} onBlur={(e) => updateSetting(ad.id, 'turno', e.target.value)} />
                                                 </td>
                                                 <td className="p-6 text-center">
-                                                    <button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen, `${!s.is_frozen ? 'Congeló' : 'Descongeló'} ${ad.id}`)} className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 shadow-lg shadow-blue-500/20' : 'bg-zinc-800 text-zinc-600'}`}>
-                                                        {s.is_frozen ? <Icon name="lock" size={14} /> : <Icon name="unlock" size={14} />}
+                                                    <button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen, `${!s.is_frozen ? 'Congeló' : 'Descongeló'}`)} className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600' : 'bg-zinc-800 text-zinc-600'}`}>
+                                                        <Icon name={s.is_frozen ? "Lock" : "Unlock"} size={14} />
                                                     </button>
                                                 </td>
                                             </tr>
@@ -331,12 +262,11 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </>
             ) : (
-                /* TURNS MANAGEMENT */
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in text-left">
                     {Object.keys(data.turns).length > 0 ? Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
                             <div className="flex items-center gap-3 mb-8">
-                                <div className="bg-blue-600/10 p-3 rounded-2xl"><Icon name="clock" className="text-blue-500" size={20} /></div>
+                                <div className="bg-blue-600/10 p-3 rounded-2xl"><Icon name="Clock" className="text-blue-500" size={20} /></div>
                                 <h2 className="text-lg font-black uppercase tracking-widest">{name}</h2>
                             </div>
                             <div className="space-y-6">
@@ -349,22 +279,30 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                     <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold" value={config.end} onChange={e => updateTurn(name, config.start, e.target.value, config.days)} />
                                 </div>
                                 <div>
-                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Días</label>
+                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Días Actividad</label>
                                     <input type="text" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold uppercase" value={config.days} onChange={e => updateTurn(name, config.start, config.end, e.target.value)} />
                                 </div>
                             </div>
                         </div>
-                    )) : <p className="text-zinc-500 uppercase font-black italic">Sin turnos configurados.</p>}
+                    )) : <p className="text-zinc-500 uppercase font-black italic">Sin turnos.</p>}
                 </div>
             )}
         </div>
     );
 };
 
-// Componente principal
 function App() {
     const [session, setSession] = useState(localStorage.getItem('session_user'));
-    return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
+    return !session ? (
+        <div className="min-h-screen flex items-center justify-center bg-black">
+            <button
+                onClick={() => { localStorage.setItem('session_user', 'Auditor'); window.location.reload(); }}
+                className="bg-blue-600 px-10 py-5 rounded-2xl font-black uppercase text-white shadow-2xl"
+            >
+                Ingresar al Panel
+            </button>
+        </div>
+    ) : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
 }
 
 export default App;
