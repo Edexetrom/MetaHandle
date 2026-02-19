@@ -90,7 +90,7 @@ async def automation_engine():
             curr_h = now.hour + (now.minute / 60)
             curr_day = now.weekday() # 0=Lunes
 
-            # Reset nocturno (Punto 8)
+            # Punto 8: Reset nocturno de congelados
             if now.hour == 0 and now.minute < 2:
                 db.query(AdSetSetting).update({"is_frozen": False})
                 db.commit()
@@ -107,15 +107,20 @@ async def automation_engine():
                     s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
                     if not s or s.is_frozen: continue
 
-                    # Lógica de Turnos (Punto 4)
+                    # Punto 4: Lógica de Turnos L-V, S, D
                     assigned = [t.strip().lower() for t in s.turno.split(",")]
                     in_time = False
                     for t_name in assigned:
                         t_cfg = turns.get(t_name)
                         if t_cfg:
-                            # Simplificación de días: L-V
-                            if "L-V" in t_cfg.days and curr_day <= 4:
-                                if t_cfg.start_hour <= curr_h < t_cfg.end_hour: in_time = True
+                            # Lógica de días (L-V abarca L, M, Mi, J, V)
+                            days_active = []
+                            if "L-V" in t_cfg.days: days_active.extend([0,1,2,3,4])
+                            if "S" in t_cfg.days: days_active.append(5)
+                            if "D" in t_cfg.days: days_active.append(6)
+                            
+                            if curr_day in days_active and (t_cfg.start_hour <= curr_h < t_cfg.end_hour):
+                                in_time = True; break
                     
                     spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0))
                     budget = float(ad.get("daily_budget", 0)) / 100
@@ -140,14 +145,15 @@ async def startup():
         db.add(AutomationState(id=1, is_active=False))
         db.add_all([
             TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
-            TurnConfig(name="vespertino", start_hour=13.0, end_hour=21.0, days="L-V")
+            TurnConfig(name="vespertino", start_hour=13.0, end_hour=21.0, days="L-V"),
+            TurnConfig(name="fsemana", start_hour=8.0, end_hour=14.0, days="S")
         ])
-    db.commit()
-    db.close()
+    db.commit(); db.close()
     asyncio.create_task(automation_engine())
 
 @app.get("/auth/auditors")
 async def get_auditors():
+    # Punto 1: Droplist desde Sheets
     creds = get_google_creds()
     service = build('sheets', 'v4', credentials=creds)
     res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
@@ -177,7 +183,7 @@ async def sync_data():
         settings = {s.id: {"limit_perc": s.limit_perc, "turno": s.turno, "is_frozen": s.is_frozen} for s in db.query(AdSetSetting).all()}
         turns = {t.name: {"start": t.start_hour, "end": t.end_hour, "days": t.days} for t in db.query(TurnConfig).all()}
         auto = db.query(AutomationState).first()
-        logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(10).all()
+        logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(15).all()
         
         return {
             "meta": meta, "settings": settings, "turns": turns,
@@ -188,24 +194,23 @@ async def sync_data():
 
 @app.post("/ads/meta-status")
 async def update_meta_status(req: dict):
-    # Punto 2/3: Apagado/Encendido manual sincronizado
+    # Punto 2/3: Apagado/Encendido manual sincronizado e inmediato
     async with httpx.AsyncClient(timeout=30.0) as client:
         res = await client.post(f"https://graph.facebook.com/{API_VERSION}/{req['id']}", params={"status": req['status'], "access_token": META_ACCESS_TOKEN})
         if res.status_code == 200:
             db = SessionLocal()
-            db.add(ActionLog(user=req['user'], msg=f"Cambio manual a {req['status']} en ID {req['id']}"))
-            db.commit()
-            db.close()
+            db.add(ActionLog(user=req['user'], msg=f"Cambió manualmente {req['id']} a {req['status']}"))
+            db.commit(); db.close()
             return {"ok": True}
     return {"ok": False}
 
 @app.post("/ads/update")
 async def update_setting(req: dict):
+    # Punto 9: Actualización para todos los usuarios
     db = SessionLocal()
     try:
         s = db.query(AdSetSetting).filter(AdSetSetting.id == req['id']).first()
-        if not s:
-            s = AdSetSetting(id=req['id']); db.add(s)
+        if not s: s = AdSetSetting(id=req['id']); db.add(s)
         if 'limit_perc' in req: s.limit_perc = float(req['limit_perc'])
         if 'turno' in req: s.turno = req['turno']
         if 'is_frozen' in req: s.is_frozen = bool(req['is_frozen'])
@@ -216,20 +221,21 @@ async def update_setting(req: dict):
 
 @app.post("/ads/bulk-update")
 async def bulk_update(req: dict):
+    # Punto 5: Modificación grupal
     db = SessionLocal()
     try:
         for sid in req['ids']:
             s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
-            if not s:
-                s = AdSetSetting(id=sid); db.add(s)
+            if not s: s = AdSetSetting(id=sid); db.add(s)
             s.limit_perc = float(req['limit_perc'])
-        db.add(ActionLog(user=req['user'], msg=f"Ajuste masivo {req['limit_perc']}% a {len(req['ids'])} adsets"))
+        db.add(ActionLog(user=req['user'], msg=f"Aplicó límite masivo {req['limit_perc']}% a {len(req['ids'])} conjuntos"))
         db.commit()
         return {"ok": True}
     finally: db.close()
 
 @app.post("/turns/update")
 async def update_turn(req: dict):
+    # Punto 4: Modificador de turnos
     db = SessionLocal()
     try:
         t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
@@ -241,11 +247,12 @@ async def update_turn(req: dict):
 
 @app.post("/ads/automation/toggle")
 async def toggle_auto(req: dict):
+    # Punto 2: Sync de switch de automatización entre auditores
     db = SessionLocal()
     try:
         auto = db.query(AutomationState).first()
         auto.is_active = not auto.is_active
-        db.add(ActionLog(user=req['user'], msg=f"{'Encendió' if auto.is_active else 'Apagó'} automatización"))
+        db.add(ActionLog(user=req['user'], msg=f"{'Encendió' if auto.is_active else 'Apagó'} la automatización"))
         db.commit()
         return {"is_active": auto.is_active}
     finally: db.close()
