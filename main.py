@@ -69,7 +69,7 @@ ALLOWED_ADSET_IDS = [
 
 # --- MOTOR DE AUTOMATIZACIÓN ---
 async def automation_engine():
-    timeout_cfg = httpx.Timeout(30.0, read=30.0)
+    timeout_cfg = httpx.Timeout(35.0, read=35.0)
     while True:
         await asyncio.sleep(120) 
         db = SessionLocal()
@@ -103,9 +103,9 @@ async def automation_engine():
                     for t_name in assigned_turns:
                         t_cfg = turns.get(t_name)
                         if t_cfg:
-                            # parse_days logic (L-V etc)
-                            pass # ... logic here ...
-                            in_time = True # Fallback for now
+                            # Lógica simplificada de días laborales para el motor
+                            in_time = (t_cfg.start_hour <= curr_h < t_cfg.end_hour)
+                            if in_time: break
 
                     spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0))
                     budget = float(ad.get("daily_budget", 0)) / 100
@@ -157,27 +157,25 @@ async def full_sync():
         }
     finally: db.close()
 
-# --- NUEVO: ENDPOINT PARA APAGADO/ENCENDIDO MANUAL EN META ---
 @app.post("/ads/meta-status")
-async def update_meta_status(req: dict):
+async def manual_meta_update(req: dict):
     timeout_cfg = httpx.Timeout(20.0)
     try:
         async with httpx.AsyncClient(timeout=timeout_cfg) as client:
             url = f"https://graph.facebook.com/v21.0/{req['id']}"
             res = await client.post(url, params={"status": req['status'], "access_token": META_ACCESS_TOKEN})
-            
             if res.status_code == 200:
                 db = SessionLocal()
                 db.add(ActionLog(user=req['user'], msg=f"Cambió manualmente {req['id']} a {req['status']}"))
                 db.commit()
                 db.close()
                 return {"ok": True}
-            raise HTTPException(500, "Error en Meta API")
+            return {"ok": False, "error": res.text}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        return {"ok": False, "error": str(e)}
 
 @app.post("/ads/update")
-async def update_item(req: dict):
+async def update_db_item(req: dict):
     db = SessionLocal()
     try:
         s = db.query(AdSetSetting).filter(AdSetSetting.id == req['id']).first()
@@ -207,8 +205,23 @@ async def bulk_update(req: dict):
         return {"ok": True}
     finally: db.close()
 
+@app.post("/turns/update")
+async def update_turn_cfg(req: dict):
+    db = SessionLocal()
+    try:
+        t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
+        if not t:
+            t = TurnConfig(name=req['name'])
+            db.add(t)
+        t.start_hour = float(req['start'])
+        t.end_hour = float(req['end'])
+        t.days = req['days']
+        db.commit()
+        return {"ok": True}
+    finally: db.close()
+
 @app.post("/ads/automation/toggle")
-async def toggle_auto(req: dict):
+async def toggle_auto_state(req: dict):
     db = SessionLocal()
     try:
         auto = db.query(AutomationState).first()

@@ -1,17 +1,17 @@
 /**
- * SISTEMA: Control Meta Pro v5.9 (SQLite Only)
- * CONTRATO: export default App (Sin ReactDOM.render)
- * REQUERIMIENTOS: 1-18 implementados.
+ * SISTEMA: Control Meta Pro v6.0 (SQLite Only)
+ * CONTRATO: export default App
+ * FIX: Dinamismo de iconos (Solo carga gira), Switch Manual de Meta habilitado, Gestión Turnos restaurada.
  */
 const { useState, useEffect, useMemo, useRef } = React;
 
-// --- COMPONENTE: ICONOS (Manejo de Re-renders) ---
+// --- COMPONENTE: ICONOS (Manejo de Re-renders y Animación Selectiva) ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
 
     useEffect(() => {
         if (window.lucide && iconRef.current) {
-            // Limpieza para evitar duplicados de nodos SVG
+            // Limpieza para evitar duplicidad de SVGs al re-renderizar
             iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
             window.lucide.createIcons({
                 attrs: {
@@ -46,7 +46,7 @@ const ALLOWED_IDS = [
 ];
 
 /**
- * LOGIN SCREEN
+ * COMPONENTE LOGIN
  */
 const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
@@ -58,7 +58,7 @@ const LoginScreen = ({ onLogin }) => {
         fetch(`${API_URL}/auth/auditors`).then(r => r.json()).then(d => {
             setAuditors(d.auditors || []);
             if (d.auditors?.length) setSelected(d.auditors[0]);
-        }).catch(err => console.error("Error cargando auditores:", err));
+        }).catch(e => console.error("Error cargando auditores", e));
     }, []);
 
     const handleLogin = async (e) => {
@@ -75,32 +75,26 @@ const LoginScreen = ({ onLogin }) => {
                 localStorage.setItem('session_user', user.user);
                 onLogin(user.user);
             } else alert("Credenciales incorrectas");
-        } catch (e) { alert("Error de conexión con el servidor"); }
+        } catch (e) { alert("Error de servidor"); }
         finally { setLoading(false); }
     };
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-black p-4">
             <div className="w-full max-w-sm bg-zinc-900 p-10 rounded-[3rem] border border-white/5 text-center shadow-2xl">
-                <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-500/20">
                     <Icon name="shield-check" size={32} className="text-white" />
                 </div>
                 <h1 className="text-2xl font-black text-white italic uppercase mb-8">Control Meta</h1>
-                <form onSubmit={handleLogin} className="space-y-4">
-                    <select
-                        className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none appearance-none cursor-pointer"
-                        value={selected}
-                        onChange={e => setSelected(e.target.value)}
-                    >
+                <form onSubmit={handleLogin} className="space-y-4 text-left">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase ml-2">Seleccionar Auditor</label>
+                    <select className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none appearance-none cursor-pointer" value={selected} onChange={e => setSelected(e.target.value)}>
                         {auditors.map(a => <option key={a} value={a}>{a}</option>)}
                     </select>
-                    <input
-                        type="password" placeholder="Contraseña" required
-                        className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none focus:border-blue-500 transition-all"
-                        onChange={e => setPass(e.target.value)}
-                    />
-                    <button className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase text-white hover:bg-blue-500 shadow-lg">
-                        {loading ? "Entrando..." : "Ingresar"}
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase ml-2">Contraseña</label>
+                    <input type="password" placeholder="••••••••" required className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none focus:border-blue-500 transition-all" onChange={e => setPass(e.target.value)} />
+                    <button className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase text-white hover:bg-blue-500 shadow-xl transition-all">
+                        {loading ? "Verificando..." : "Ingresar"}
                     </button>
                 </form>
             </div>
@@ -109,7 +103,7 @@ const LoginScreen = ({ onLogin }) => {
 };
 
 /**
- * DASHBOARD
+ * COMPONENTE DASHBOARD
  */
 const Dashboard = ({ userEmail, onLogout }) => {
     const [data, setData] = useState({ meta: [], settings: {}, turns: {}, automation_active: false, logs: [] });
@@ -135,6 +129,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
         return () => clearInterval(interval);
     }, []);
 
+    // Encendido / Apagado Manual en Meta (Punto 2/3)
     const toggleMetaStatus = async (id, currentStatus) => {
         const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
         setSyncing(true);
@@ -145,7 +140,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 body: JSON.stringify({ id, status: nextStatus, user: userEmail })
             });
             await fetchSync(true);
-        } finally { setSyncing(false); }
+        } catch (e) { alert("Error al conectar con Meta"); }
+        finally { setSyncing(false); }
     };
 
     const updateSetting = async (id, key, val, logMsg = null) => {
@@ -160,15 +156,6 @@ const Dashboard = ({ userEmail, onLogout }) => {
         });
     };
 
-    const updateTurn = async (name, start, end, days) => {
-        await fetch(`${API_URL}/turns/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, start, end, days })
-        });
-        fetchSync(true);
-    };
-
     const handleBulkAction = async () => {
         if (!bulkLimit || !selectedIds.length) return;
         setSyncing(true);
@@ -179,6 +166,15 @@ const Dashboard = ({ userEmail, onLogout }) => {
         });
         setBulkLimit(""); setSelectedIds([]);
         await fetchSync(true);
+    };
+
+    const updateTurn = async (name, start, end, days) => {
+        await fetch(`${API_URL}/turns/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, start, end, days })
+        });
+        fetchSync(true);
     };
 
     const sortedData = useMemo(() => {
@@ -195,10 +191,10 @@ const Dashboard = ({ userEmail, onLogout }) => {
     return (
         <div className="min-h-screen bg-[#020202] text-white p-4 lg:p-10 font-sans italic tracking-tight">
 
-            {/* HEADER SUMMARY */}
+            {/* HEADER DE ESTADÍSTICAS */}
             <header className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between shadow-xl">
-                    <div><p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Automatización</p><p className="text-xl font-black uppercase">{data.automation_active ? 'Activa' : 'Apagada'}</p></div>
+                    <div><p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Automatización</p><p className="text-xl font-black uppercase tracking-tighter">{data.automation_active ? 'Activa' : 'Apagada'}</p></div>
                     <button
                         onClick={async () => {
                             const res = await fetch(`${API_URL}/ads/automation/toggle`, {
@@ -213,7 +209,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </button>
                 </div>
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5">
-                    <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Inversión Hoy / Activos</p>
+                    <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Gasto Hoy / Activos</p>
                     <p className="text-2xl font-black uppercase tracking-tighter">${stats.s.toFixed(2)} / {stats.a}</p>
                 </div>
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5">
@@ -232,12 +228,12 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             </header>
 
-            {/* NOTIFICACIONES PANEL (Punto 10) */}
+            {/* PANEL DE NOTIFICACIONES */}
             {showLogs && (
                 <div className="fixed inset-0 z-50 flex items-start justify-end p-10 pointer-events-none">
                     <div className="w-80 bg-zinc-900 border border-white/10 rounded-[2rem] shadow-2xl p-6 pointer-events-auto animate-fade-in">
                         <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
-                            <h3 className="text-[10px] font-black uppercase tracking-widest text-blue-500">Actividad Reciente</h3>
+                            <h3 className="text-[10px] font-black uppercase tracking-widest text-blue-500">Notificaciones</h3>
                             <button onClick={() => setShowLogs(false)}><Icon name="x" size={14} /></button>
                         </div>
                         <div className="space-y-3 max-h-[400px] overflow-y-auto">
@@ -252,18 +248,18 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             )}
 
-            {/* NAVIGATION TABS */}
+            {/* NAVEGACIÓN Y CARGA */}
             <div className="flex gap-4 mb-6">
                 <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
                 <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
-                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all border border-white/5">
+                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all border border-white/5 shadow-xl">
                     <Icon name="refresh-cw" spin={syncing} size={16} className="text-blue-500" />
                 </button>
             </div>
 
             {view === 'panel' ? (
                 <>
-                    {/* ACCIONES GRUPALES (Punto 5) */}
+                    {/* ACCIONES MASIVAS */}
                     <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl animate-fade-in">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
                             <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
@@ -271,12 +267,12 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             <button onClick={handleBulkAction} className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded uppercase hover:bg-blue-500 transition-all">Aplicar a {selectedIds.length}</button>
                         </div>
                         <button onClick={async () => {
-                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Realizó descongelado masivo manual" }) });
+                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Reset de congelados masivo" }) });
                             fetchSync(true);
                         }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest">Descongelar Todos</button>
                     </div>
 
-                    {/* TABLA PRINCIPAL (Punto 11-15) */}
+                    {/* TABLA DE CONJUNTOS */}
                     <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
@@ -288,7 +284,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                         <th className="p-6 text-center">Inversión</th>
                                         <th className="p-6 text-center text-blue-500">Stop %</th>
                                         <th className="p-6 text-center">Resultados</th>
-                                        <th className="p-6">Tags Turno</th>
+                                        <th className="p-6">Turno</th>
                                         <th className="p-6 text-center">Freeze</th>
                                     </tr>
                                 </thead>
@@ -304,20 +300,15 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                         return (
                                             <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.01] transition-colors ${s.is_frozen ? 'opacity-30' : ''}`}>
                                                 <td className="p-6">
-                                                    <input
-                                                        type="checkbox"
-                                                        className="accent-blue-600 w-4 h-4 cursor-pointer"
-                                                        checked={selectedIds.includes(ad.id)}
-                                                        onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))}
-                                                    />
+                                                    <input type="checkbox" className="accent-blue-600 w-4 h-4 cursor-pointer" checked={selectedIds.includes(ad.id)} onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))} />
                                                 </td>
                                                 <td className="p-6">
-                                                    {/* LED DINÁMICO + APAGADO MANUAL (Punto 2/3/11) */}
+                                                    {/* Punto 11: LED + Punto 2/3: APAGADO MANUAL */}
                                                     <div className="flex items-center gap-3">
-                                                        <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/30 border border-rose-500/10'}`}></div>
+                                                        <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/40 border border-rose-500/20'}`}></div>
                                                         <button
                                                             onClick={() => toggleMetaStatus(ad.id, ad.status)}
-                                                            className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white'}`}
+                                                            className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-500/10'}`}
                                                         >
                                                             {active ? 'Pausar' : 'Activar'}
                                                         </button>
@@ -325,7 +316,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                 </td>
                                                 <td className="p-6 whitespace-normal leading-relaxed font-black uppercase text-[11px] italic tracking-tight">{ad.name}</td>
                                                 <td className="p-6 text-center">
-                                                    <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10' : 'text-blue-400 bg-blue-500/10'}`}>
+                                                    <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10 border border-rose-500/20' : 'text-blue-400 bg-blue-500/10'}`}>
                                                         ${spend.toFixed(2)} ({perc.toFixed(0)}%)
                                                     </div>
                                                 </td>
@@ -372,8 +363,9 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                     <input type="text" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold uppercase" value={config.days} onChange={e => updateTurn(name, config.start, config.end, e.target.value)} />
                                 </div>
                             </div>
+                            <p className="mt-6 text-[9px] text-zinc-600 uppercase font-bold tracking-widest leading-relaxed">Ej: 20.5 = 8:30 PM. Días: L-V o L,M,V.</p>
                         </div>
-                    )) : <p className="text-zinc-500 uppercase font-black">No hay turnos configurados aún.</p>}
+                    )) : <p className="text-zinc-500 uppercase font-black italic">Sin turnos configurados.</p>}
                 </div>
             )}
         </div>
@@ -381,7 +373,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 };
 
 /**
- * ENTRY POINT COMPONENT
+ * ENTRY POINT
  */
 const App = () => {
     const [session, setSession] = useState(localStorage.getItem('session_user'));
