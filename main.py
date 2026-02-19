@@ -65,10 +65,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 async def startup_event():
     app.state.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=60.0))
     db = SessionLocal()
-    # Asegurar estado inicial
     if not db.query(AutomationState).first():
         db.add(AutomationState(id=1, is_active=False))
-    # SEMBRADO DE TURNOS (Si no existen, se crean)
     if not db.query(TurnConfig).first():
         db.add_all([
             TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
@@ -134,7 +132,7 @@ async def automation_engine():
         except: pass
         finally: db.close()
 
-# --- ENDPOINTS API ---
+# --- API ENDPOINTS ---
 
 @app.get("/ads/sync")
 async def sync_data():
@@ -159,7 +157,7 @@ async def update_meta_status(req: dict):
         db = SessionLocal()
         db.add(ActionLog(user=req['user'], msg=f"Manual: {req['status']} en {req['id']}"))
         db.commit(); db.close()
-        meta_cache["timestamp"] = 0 # Invalidar caché
+        meta_cache["timestamp"] = 0 
         return {"ok": True}
     return {"ok": False}
 
@@ -176,15 +174,25 @@ async def update_setting(req: dict):
         db.commit(); return {"ok": True}
     finally: db.close()
 
+@app.post("/ads/bulk-update")
+async def bulk_update(req: dict):
+    db = SessionLocal()
+    try:
+        for sid in req['ids']:
+            s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
+            if not s: s = AdSetSetting(id=sid); db.add(s)
+            s.limit_perc = float(req['limit_perc'])
+        db.add(ActionLog(user=req['user'], msg=f"Masivo: {req['limit_perc']}% a {len(req['ids'])} conjuntos"))
+        db.commit(); return {"ok": True}
+    finally: db.close()
+
 @app.post("/turns/update")
 async def update_turn(req: dict):
     db = SessionLocal()
     try:
         t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
         if not t: t = TurnConfig(name=req['name']); db.add(t)
-        t.start_hour = float(req['start'])
-        t.end_hour = float(req['end'])
-        t.days = req['days']
+        t.start_hour, t.end_hour, t.days = float(req['start']), float(req['end']), req['days']
         db.commit(); return {"ok": True}
     finally: db.close()
 
@@ -200,4 +208,12 @@ async def toggle_auto(req: dict):
 
 @app.get("/auth/auditors")
 async def get_auditors():
+    # En producción esto se conecta con Google Sheets o DB
     return {"auditors": ["Auditor Principal", "Auditor 2"]}
+
+@app.post("/auth/login")
+async def login(req: dict):
+    # Credenciales de respaldo v2.20
+    if req['nombre'] in ["Auditor Principal", "Auditor 2"] and req['password'] == "1234":
+        return {"user": req['nombre']}
+    raise HTTPException(401, "Contraseña incorrecta")
