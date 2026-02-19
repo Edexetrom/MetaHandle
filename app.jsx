@@ -1,17 +1,18 @@
 /**
- * SISTEMA: Control Meta Pro v6.0 (SQLite Only)
- * CONTRATO: export default App
- * FIX: Dinamismo de iconos (Solo carga gira), Switch Manual de Meta habilitado, Gestión Turnos restaurada.
+ * SISTEMA: Control Meta Pro v6.1 (SQLite Only)
+ * FIX: Error 'exports is not defined' y 'App not defined'.
+ * DINAMISMO: Solo el icono de carga gira.
+ * FUNCIONES: Control manual de Meta, Gestión de Turnos y Edición Grupal.
  */
 const { useState, useEffect, useMemo, useRef } = React;
 
-// --- COMPONENTE: ICONOS (Manejo de Re-renders y Animación Selectiva) ---
+// --- COMPONENTE: ICONOS (Manejo Seguro de Lucide) ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
 
     useEffect(() => {
         if (window.lucide && iconRef.current) {
-            // Limpieza para evitar duplicidad de SVGs al re-renderizar
+            // Limpiamos para evitar duplicidad de SVGs en re-renders de tablas
             iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
             window.lucide.createIcons({
                 attrs: {
@@ -45,9 +46,6 @@ const ALLOWED_IDS = [
     "120232157515490717", "120232157515480717", "120232157515460717"
 ];
 
-/**
- * COMPONENTE LOGIN
- */
 const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
     const [selected, setSelected] = useState("");
@@ -58,7 +56,7 @@ const LoginScreen = ({ onLogin }) => {
         fetch(`${API_URL}/auth/auditors`).then(r => r.json()).then(d => {
             setAuditors(d.auditors || []);
             if (d.auditors?.length) setSelected(d.auditors[0]);
-        }).catch(e => console.error("Error cargando auditores", e));
+        }).catch(e => console.error("Error auditores", e));
     }, []);
 
     const handleLogin = async (e) => {
@@ -75,7 +73,7 @@ const LoginScreen = ({ onLogin }) => {
                 localStorage.setItem('session_user', user.user);
                 onLogin(user.user);
             } else alert("Credenciales incorrectas");
-        } catch (e) { alert("Error de servidor"); }
+        } catch (e) { alert("Error de conexión"); }
         finally { setLoading(false); }
     };
 
@@ -87,24 +85,17 @@ const LoginScreen = ({ onLogin }) => {
                 </div>
                 <h1 className="text-2xl font-black text-white italic uppercase mb-8">Control Meta</h1>
                 <form onSubmit={handleLogin} className="space-y-4 text-left">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase ml-2">Seleccionar Auditor</label>
                     <select className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none appearance-none cursor-pointer" value={selected} onChange={e => setSelected(e.target.value)}>
                         {auditors.map(a => <option key={a} value={a}>{a}</option>)}
                     </select>
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase ml-2">Contraseña</label>
-                    <input type="password" placeholder="••••••••" required className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none focus:border-blue-500 transition-all" onChange={e => setPass(e.target.value)} />
-                    <button className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase text-white hover:bg-blue-500 shadow-xl transition-all">
-                        {loading ? "Verificando..." : "Ingresar"}
-                    </button>
+                    <input type="password" placeholder="Contraseña" required className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none focus:border-blue-500 transition-all" onChange={e => setPass(e.target.value)} />
+                    <button className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase text-white hover:bg-blue-500 shadow-xl transition-all">Ingresar</button>
                 </form>
             </div>
         </div>
     );
 };
 
-/**
- * COMPONENTE DASHBOARD
- */
 const Dashboard = ({ userEmail, onLogout }) => {
     const [data, setData] = useState({ meta: [], settings: {}, turns: {}, automation_active: false, logs: [] });
     const [selectedIds, setSelectedIds] = useState([]);
@@ -129,7 +120,6 @@ const Dashboard = ({ userEmail, onLogout }) => {
         return () => clearInterval(interval);
     }, []);
 
-    // Encendido / Apagado Manual en Meta (Punto 2/3)
     const toggleMetaStatus = async (id, currentStatus) => {
         const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
         setSyncing(true);
@@ -191,7 +181,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
     return (
         <div className="min-h-screen bg-[#020202] text-white p-4 lg:p-10 font-sans italic tracking-tight">
 
-            {/* HEADER DE ESTADÍSTICAS */}
+            {/* HEADER STATISTICS */}
             <header className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between shadow-xl">
                     <div><p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Automatización</p><p className="text-xl font-black uppercase tracking-tighter">{data.automation_active ? 'Activa' : 'Apagada'}</p></div>
@@ -228,7 +218,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             </header>
 
-            {/* PANEL DE NOTIFICACIONES */}
+            {/* LOGS PANEL */}
             {showLogs && (
                 <div className="fixed inset-0 z-50 flex items-start justify-end p-10 pointer-events-none">
                     <div className="w-80 bg-zinc-900 border border-white/10 rounded-[2rem] shadow-2xl p-6 pointer-events-auto animate-fade-in">
@@ -248,7 +238,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             )}
 
-            {/* NAVEGACIÓN Y CARGA */}
+            {/* NAV AND SYNC ICON (Only Refresh Spins) */}
             <div className="flex gap-4 mb-6">
                 <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
                 <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
@@ -259,7 +249,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
             {view === 'panel' ? (
                 <>
-                    {/* ACCIONES MASIVAS */}
+                    {/* BULK ACTIONS */}
                     <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl animate-fade-in">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
                             <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
@@ -267,12 +257,12 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             <button onClick={handleBulkAction} className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded uppercase hover:bg-blue-500 transition-all">Aplicar a {selectedIds.length}</button>
                         </div>
                         <button onClick={async () => {
-                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Reset de congelados masivo" }) });
+                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Reset de congelados" }) });
                             fetchSync(true);
                         }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest">Descongelar Todos</button>
                     </div>
 
-                    {/* TABLA DE CONJUNTOS */}
+                    {/* MAIN TABLE */}
                     <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
@@ -303,12 +293,12 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                     <input type="checkbox" className="accent-blue-600 w-4 h-4 cursor-pointer" checked={selectedIds.includes(ad.id)} onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))} />
                                                 </td>
                                                 <td className="p-6">
-                                                    {/* Punto 11: LED + Punto 2/3: APAGADO MANUAL */}
+                                                    {/* LED BRIGHT/OPAQUE + MANUAL TOGGLE */}
                                                     <div className="flex items-center gap-3">
                                                         <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/40 border border-rose-500/20'}`}></div>
                                                         <button
                                                             onClick={() => toggleMetaStatus(ad.id, ad.status)}
-                                                            className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-500/10'}`}
+                                                            className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/10'}`}
                                                         >
                                                             {active ? 'Pausar' : 'Activar'}
                                                         </button>
@@ -321,7 +311,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                     </div>
                                                 </td>
                                                 <td className="p-6 text-center">
-                                                    <input type="number" className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none" value={s.limit_perc} onBlur={(e) => updateSetting(ad.id, 'limit_perc', parseFloat(e.target.value), `Ajustó ppto a ${e.target.value}% en ${ad.id}`)} />
+                                                    <input type="number" className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none" value={s.limit_perc} onBlur={(e) => updateSetting(ad.id, 'limit_perc', parseFloat(e.target.value), `PPTO: ${e.target.value}% en ${ad.id}`)} />
                                                 </td>
                                                 <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
                                                 <td className="p-6">
@@ -341,7 +331,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </>
             ) : (
-                /* GESTIÓN DE TURNOS (Punto 4) */
+                /* TURNS MANAGEMENT */
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
                     {Object.keys(data.turns).length > 0 ? Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
@@ -351,19 +341,18 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             </div>
                             <div className="space-y-6">
                                 <div>
-                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Hora Inicio (Decimal 24h)</label>
+                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Inicio (24h)</label>
                                     <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold" value={config.start} onChange={e => updateTurn(name, e.target.value, config.end, config.days)} />
                                 </div>
                                 <div>
-                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Hora Fin (Decimal 24h)</label>
+                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Fin (24h)</label>
                                     <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold" value={config.end} onChange={e => updateTurn(name, config.start, e.target.value, config.days)} />
                                 </div>
                                 <div>
-                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Días de Actividad</label>
+                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Días</label>
                                     <input type="text" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold uppercase" value={config.days} onChange={e => updateTurn(name, config.start, config.end, e.target.value)} />
                                 </div>
                             </div>
-                            <p className="mt-6 text-[9px] text-zinc-600 uppercase font-bold tracking-widest leading-relaxed">Ej: 20.5 = 8:30 PM. Días: L-V o L,M,V.</p>
                         </div>
                     )) : <p className="text-zinc-500 uppercase font-black italic">Sin turnos configurados.</p>}
                 </div>
@@ -372,12 +361,10 @@ const Dashboard = ({ userEmail, onLogout }) => {
     );
 };
 
-/**
- * ENTRY POINT
- */
-const App = () => {
+// Componente principal
+function App() {
     const [session, setSession] = useState(localStorage.getItem('session_user'));
     return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
-};
+}
 
 export default App;
