@@ -1,47 +1,21 @@
 /**
- * SISTEMA: Control Meta Pro v4.8
- * CAMBIOS: 
- * 1. Corregida sintaxis .exists() a .exists (propiedad).
- * 2. Implementada Regla 3: Autenticación completa antes de listeners.
- * 3. Añadidos callbacks de error en onSnapshot para depuración.
+ * SISTEMA: Control Meta Pro v5.1 (SQLite Only)
+ * CAMBIOS:
+ * 1. Eliminado Firebase por completo.
+ * 2. Implementado Polling de 30 segundos para sincronizar auditores.
+ * 3. Lógica de días L-V y nombres sin truncar.
  */
-const { useState, useEffect, useMemo, useRef } = React;
+const { useState, useEffect, useMemo } = React;
 
-// --- COMPONENTE: ICONOS (Lucide) ---
 const Icon = ({ name, size = 16, className = "" }) => {
-    const iconRef = useRef(null);
+    const [ready, setReady] = useState(false);
     useEffect(() => {
-        if (window.lucide) {
-            window.lucide.createIcons();
-        }
+        if (window.lucide) { window.lucide.createIcons(); setReady(true); }
     }, [name]);
     return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
 };
 
-// --- CONFIGURACIÓN DE URL ---
-const getApiUrl = () => {
-    const host = window.location.hostname;
-    if (host.includes('libresdeumas.com')) {
-        return "https://manejoapi.libresdeumas.com";
-    }
-    return `http://localhost:8000`;
-};
-
-const API_URL = getApiUrl();
-
-// --- FIREBASE INIT ---
-// Usamos las variables globales proporcionadas por el entorno
-const firebaseConfig = typeof __firebase_config !== 'undefined'
-    ? JSON.parse(__firebase_config)
-    : JSON.parse(window.__firebase_config || '{}');
-
-if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
-}
-
-const db = firebase.firestore();
-const auth = firebase.auth();
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'control-meta-pro-v4';
+const API_URL = "https://manejoapi.libresdeumas.com";
 
 const ALLOWED_IDS = [
     "120238886501840717", "120238886472900717", "120238886429400717",
@@ -52,182 +26,59 @@ const ALLOWED_IDS = [
     "120232157515490717", "120232157515480717", "120232157515460717"
 ];
 
-/**
- * LOGIN SCREEN
- */
-const LoginScreen = ({ onLogin }) => {
-    const [auditors, setAuditors] = useState([]);
-    const [selected, setSelected] = useState("");
-    const [pass, setPass] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState("");
-
-    useEffect(() => {
-        fetch(`${API_URL}/auth/auditors`)
-            .then(res => res.json())
-            .then(d => {
-                setAuditors(d.auditors || []);
-                if (d.auditors?.length) setSelected(d.auditors[0]);
-            })
-            .catch(e => {
-                console.error("Error API:", e);
-                setError("Error al conectar con la API de Auditores");
-            });
-    }, []);
-
-    const handleLogin = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        try {
-            const res = await fetch(`${API_URL}/auth/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nombre: selected, password: pass })
-            });
-            if (res.ok) {
-                localStorage.setItem('session_user', selected);
-                onLogin(selected);
-            } else {
-                alert("Contraseña incorrecta");
-            }
-        } catch (e) { alert("Fallo de red con la API"); }
-        finally { setLoading(false); }
-    };
-
-    return (
-        <div className="min-h-screen flex items-center justify-center p-6 bg-black font-sans">
-            <div className="w-full max-w-md bg-zinc-900 border border-white/5 p-12 rounded-[3rem] shadow-2xl text-center">
-                <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8">
-                    <Icon name="shield-check" size={40} className="text-white" />
-                </div>
-                <h2 className="text-3xl font-black italic uppercase text-white mb-10 tracking-tighter">Control Meta</h2>
-                {error && <p className="text-rose-500 text-[10px] mb-4 uppercase font-bold tracking-widest">{error}</p>}
-                <form onSubmit={handleLogin} className="space-y-6 text-left">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase ml-4 tracking-widest">Seleccionar Auditor</label>
-                    <select className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none appearance-none cursor-pointer" value={selected} onChange={e => setSelected(e.target.value)}>
-                        {auditors.map(a => <option key={a} value={a}>{a}</option>)}
-                    </select>
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase ml-4 tracking-widest">Contraseña</label>
-                    <input type="password" placeholder="••••••••" required className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none focus:border-blue-500 transition-all" onChange={e => setPass(e.target.value)} />
-                    <button className="w-full bg-blue-600 py-5 rounded-2xl font-black uppercase text-white shadow-xl hover:bg-blue-500 transition-all">
-                        {loading ? "Validando..." : "Ingresar"}
-                    </button>
-                </form>
-            </div>
-        </div>
-    );
-};
-
-/**
- * DASHBOARD
- */
 const Dashboard = ({ userEmail, onLogout }) => {
-    const [metaData, setMetaData] = useState([]);
-    const [settings, setSettings] = useState({});
-    const [autoState, setAutoState] = useState(false);
-    const [logs, setLogs] = useState([]);
+    const [data, setData] = useState({ meta: [], settings: {}, automation_active: false, logs: [] });
     const [selectedIds, setSelectedIds] = useState([]);
     const [bulkLimit, setBulkLimit] = useState("");
     const [loading, setLoading] = useState(true);
-    const [user, setUser] = useState(null);
 
-    // EFECTO 1: Autenticación (Regla 3)
+    // Función de Sincronización (Reemplaza a Firebase)
+    const sync = async (silent = false) => {
+        if (!silent) setLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/ads/sync`);
+            const json = await res.json();
+            setData(json);
+        } catch (e) { console.error("Sync Error:", e); }
+        finally { setLoading(false); }
+    };
+
     useEffect(() => {
-        const initAuth = async () => {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await auth.signInWithCustomToken(__initial_auth_token);
-                } else {
-                    await auth.signInAnonymously();
-                }
-            } catch (err) {
-                console.error("Auth Error:", err);
-            }
-        };
-        initAuth();
-        const unsubscribe = auth.onAuthStateChanged(u => setUser(u));
-        return () => unsubscribe();
+        sync();
+        // Polling: Cada 30 segundos consultamos al servidor para ver cambios de otros auditores
+        const interval = setInterval(() => sync(true), 30000);
+        return () => clearInterval(interval);
     }, []);
 
-    // EFECTO 2: Listeners Firestore (Solo si hay usuario)
-    useEffect(() => {
-        if (!user) return;
+    const updateAdSet = async (id, key, val, logMsg = null) => {
+        // Actualización optimista en UI
+        setData(prev => ({
+            ...prev,
+            settings: { ...prev.settings, [id]: { ...prev.settings[id], [key]: val } }
+        }));
 
-        // Listener Estado Automatización
-        const unsubAuto = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('automation').doc('state')
-            .onSnapshot(
-                d => { if (d.exists) setAutoState(d.data().is_active); },
-                e => console.error("Auto Snapshot Error:", e)
-            );
-
-        // Listener Configuración AdSets
-        const unsubSettings = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets')
-            .onSnapshot(
-                s => {
-                    const d = {}; s.forEach(doc => d[doc.id] = doc.data());
-                    setSettings(d);
-                },
-                e => console.error("Settings Snapshot Error:", e)
-            );
-
-        // Listener Logs
-        const unsubLogs = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('logs')
-            .orderBy('time', 'desc').limit(3)
-            .onSnapshot(
-                s => {
-                    const l = []; s.forEach(doc => l.push(doc.data()));
-                    setLogs(l);
-                },
-                e => console.error("Logs Snapshot Error:", e)
-            );
-
-        const syncMeta = () => fetch(`${API_URL}/ads/sync`).then(r => r.json()).then(d => {
-            setMetaData(d.data || []);
-            setLoading(false);
-        }).catch(e => console.error("Sync Meta Error:", e));
-
-        syncMeta();
-        const interval = setInterval(syncMeta, 120000);
-
-        return () => { unsubAuto(); unsubSettings(); unsubLogs(); clearInterval(interval); };
-    }, [user]);
-
-    const logAction = async (msg) => {
-        if (!user) return;
-        await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('logs').add({
-            user: userEmail, msg, time: Date.now()
+        await fetch(`${API_URL}/ads/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, [key]: val, user: userEmail, log: logMsg })
         });
     };
 
-    const updateSetting = async (id, key, val) => {
-        if (!user) return;
-        await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets').doc(id).set({ [key]: val }, { merge: true });
-    };
-
-    const handleBulk = async () => {
-        if (!bulkLimit || !selectedIds.length || !user) return;
-        const limitVal = parseFloat(bulkLimit);
-        for (const id of selectedIds) {
-            await updateSetting(id, 'limit_perc', limitVal);
-        }
-        logAction(`Aplicó límite masivo de ${limitVal}% a ${selectedIds.length} conjuntos`);
-        setBulkLimit("");
-        setSelectedIds([]);
-    };
-
-    const handleResetFrozen = async () => {
-        if (!user) return;
-        const batch = db.batch();
-        const snap = await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets').get();
-        snap.forEach(doc => batch.update(doc.ref, { is_frozen: false }));
-        await batch.commit();
-        logAction("Realizó reset de congelados manual");
+    const toggleAuto = async () => {
+        const res = await fetch(`${API_URL}/ads/automation/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: userEmail })
+        });
+        const json = await res.json();
+        setData(prev => ({ ...prev, automation_active: json.is_active }));
     };
 
     const sortedData = useMemo(() => {
-        return [...metaData].filter(ad => ALLOWED_IDS.includes(ad.id))
+        return [...data.meta]
+            .filter(ad => ALLOWED_IDS.includes(ad.id))
             .sort((a, b) => (a.status === 'ACTIVE' ? -1 : 1));
-    }, [metaData]);
+    }, [data.meta]);
 
     const stats = useMemo(() => sortedData.reduce((acc, ad) => {
         const i = ad.insights?.data?.[0] || {};
@@ -235,75 +86,39 @@ const Dashboard = ({ userEmail, onLogout }) => {
         if (ad.status === 'ACTIVE') acc.a++; return acc;
     }, { s: 0, r: 0, a: 0 }), [sortedData]);
 
-    if (loading) return <div className="min-h-screen bg-black flex flex-col items-center justify-center font-black text-blue-500 uppercase tracking-widest animate-pulse text-xl">
-        <Icon name="refresh-cw" className="animate-spin mb-4" size={32} />
-        Sincronizando Sistema...
-    </div>;
+    if (loading && !data.meta.length) return <div className="min-h-screen bg-black flex items-center justify-center text-blue-500 font-black italic uppercase animate-pulse">Iniciando SQLite Engine...</div>;
 
     return (
-        <div className="min-h-screen bg-black text-white p-6 lg:p-12 animate-fade-in font-sans">
-
-            {/* SUMATORIAS SUPERIORES */}
+        <div className="min-h-screen bg-black text-white p-6 lg:p-12 font-sans animate-in">
+            {/* SUMATORIAS */}
             <header className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
                 <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5 flex items-center justify-between shadow-2xl">
-                    <div><p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Automatización</p><p className="text-xl font-black italic">{autoState ? 'SISTEMA ACTIVO' : 'SISTEMA APAGADO'}</p></div>
-                    <button
-                        onClick={async () => {
-                            const next = !autoState;
-                            await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('automation').doc('state').set({ is_active: next });
-                            logAction(`${next ? 'Encendió' : 'Apagó'} la automatización maestra`);
-                        }}
-                        className={`w-14 h-7 rounded-full p-1 transition-all ${autoState ? 'bg-blue-600 shadow-[0_0_15px_#2563eb]' : 'bg-zinc-700'}`}
-                    >
-                        <div className={`w-5 h-5 bg-white rounded-full transition-all ${autoState ? 'translate-x-7' : ''}`} />
+                    <div><p className="text-[10px] font-black text-blue-500 uppercase">Automatización</p><p className="text-xl font-black italic">{data.automation_active ? 'SISTEMA ACTIVO' : 'SISTEMA APAGADO'}</p></div>
+                    <button onClick={toggleAuto} className={`w-14 h-7 rounded-full p-1 transition-all ${data.automation_active ? 'bg-blue-600' : 'bg-zinc-700'}`}>
+                        <div className={`w-5 h-5 bg-white rounded-full transition-all ${data.automation_active ? 'translate-x-7' : ''}`} />
                     </button>
                 </div>
                 <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5">
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Gasto Hoy / Activos</p>
+                    <p className="text-[10px] font-black text-zinc-500 uppercase">Gasto Hoy / Activos</p>
                     <p className="text-2xl font-black italic">${stats.s.toFixed(2)} / {stats.a}</p>
                 </div>
                 <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5">
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Resultados Totales</p>
+                    <p className="text-[10px] font-black text-zinc-500 uppercase">Resultados Totales</p>
                     <p className="text-2xl font-black italic">{stats.r}</p>
                 </div>
                 <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5 flex items-center justify-between">
-                    <div className="truncate"><p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Auditor Conectado</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
+                    <div className="truncate"><p className="text-[10px] font-black text-emerald-500 uppercase">Auditor</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
                     <button onClick={onLogout} className="text-rose-500 hover:opacity-70 transition-all"><Icon name="log-out" size={20} /></button>
                 </div>
             </header>
 
-            {/* NOTIFICACIONES EN TIEMPO REAL */}
+            {/* NOTIFICACIONES */}
             <div className="space-y-2 mb-8">
-                {logs.map((l, i) => (
-                    <div key={i} className="bg-blue-600/5 border border-blue-500/10 p-3 rounded-xl flex items-center gap-2 text-[10px] font-bold uppercase animate-fade-in">
+                {data.logs.map((l, i) => (
+                    <div key={i} className="bg-blue-600/5 border border-blue-500/10 p-3 rounded-xl flex items-center gap-2 text-[10px] font-bold uppercase">
                         <Icon name="bell" size={12} className="text-blue-500" /><span className="text-blue-400">{l.user}</span> {l.msg}
                     </div>
                 ))}
-            </div>
-
-            {/* ACCIONES GRUPALES */}
-            <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6">
-                <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
-                    <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Grupal:</span>
-                    <input
-                        type="number"
-                        className="bg-zinc-800 w-16 p-1 text-center text-xs rounded outline-none text-blue-500 font-bold"
-                        value={bulkLimit}
-                        onChange={e => setBulkLimit(e.target.value)}
-                    />
-                    <button
-                        onClick={handleBulk}
-                        className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded uppercase hover:bg-blue-500 transition-all"
-                    >
-                        Aplicar a {selectedIds.length}
-                    </button>
-                </div>
-                <button
-                    onClick={handleResetFrozen}
-                    className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest"
-                >
-                    Descongelar Todos
-                </button>
             </div>
 
             {/* TABLA - SIN TRUNCADO */}
@@ -312,60 +127,39 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     <table className="w-full text-left">
                         <thead>
                             <tr className="bg-black/50 text-[9px] font-black text-zinc-500 uppercase tracking-widest border-b border-white/5">
-                                <th className="p-6">SEL.</th><th className="p-6">LED</th><th className="p-6">NOMBRE COMPLETO ADSET</th>
-                                <th className="p-6 text-center">PPTO</th><th className="p-6 text-center">GASTO</th>
-                                <th className="p-6 text-center text-blue-500">STOP %</th><th className="p-6 text-center">RES.</th>
-                                <th className="p-6">TURNO / DIAS</th><th className="p-6 text-center">FREEZE</th>
+                                <th className="p-6">LED</th><th className="p-6">NOMBRE COMPLETO ADSET</th>
+                                <th className="p-6 text-center">GASTO</th><th className="p-6 text-center text-blue-500">STOP %</th>
+                                <th className="p-6 text-center">RES.</th><th className="p-6">TURNO / DIAS</th><th className="p-6 text-center">FREEZE</th>
                             </tr>
                         </thead>
                         <tbody className="text-xs">
                             {sortedData.map(ad => {
-                                const s = settings[ad.id] || { turno: "L-V", limit_perc: 50, is_frozen: false };
+                                const s = data.settings[ad.id] || { turno: "L-V", limit_perc: 50, is_frozen: false };
                                 const i = ad.insights?.data?.[0] || {};
                                 const budget = parseFloat(ad.daily_budget || 0) / 100;
                                 const spend = parseFloat(i.spend || 0);
                                 const perc = budget > 0 ? (spend / budget * 100) : 0;
                                 return (
-                                    <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.02] transition-colors ${s.is_frozen ? 'opacity-40' : ''}`}>
-                                        <td className="p-6">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedIds.includes(ad.id)}
-                                                onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))}
-                                                className="accent-blue-600 w-4 h-4 cursor-pointer"
-                                            />
-                                        </td>
-                                        <td className="p-6">
-                                            <div className="flex items-center gap-2">
-                                                <Icon name="circle" size={10} className={ad.status === 'ACTIVE' ? 'text-emerald-500 fill-emerald-500' : 'text-rose-500 fill-rose-500'} />
-                                            </div>
-                                        </td>
-                                        <td className="p-6 whitespace-normal leading-relaxed font-black uppercase text-xs w-[450px] italic tracking-tight">{ad.name}</td>
-                                        <td className="p-6 text-center font-bold text-zinc-400">${budget.toFixed(0)}</td>
+                                    <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.02] ${s.is_frozen ? 'opacity-40' : ''}`}>
+                                        <td className="p-6"><Icon name="circle" size={10} className={ad.status === 'ACTIVE' ? 'text-emerald-500 fill-emerald-500' : 'text-rose-500 fill-rose-500'} /></td>
+                                        <td className="p-6 whitespace-normal leading-relaxed font-black uppercase text-xs w-[450px]">{ad.name}</td>
                                         <td className="p-6 text-center">
-                                            <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10 border border-rose-500/20' : 'text-blue-400 bg-blue-500/10 border border-blue-500/10'}`}>
+                                            <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10' : 'text-blue-400 bg-blue-500/10'}`}>
                                                 ${spend.toFixed(2)} ({perc.toFixed(0)}%)
                                             </div>
                                         </td>
                                         <td className="p-6 text-center">
-                                            <input
-                                                type="number"
-                                                className="bg-black border border-white/10 w-16 p-2 rounded text-center text-blue-500 font-black outline-none"
-                                                value={s.limit_perc}
-                                                onChange={e => updateSetting(ad.id, 'limit_perc', parseFloat(e.target.value))}
-                                            />
+                                            <input type="number" className="bg-black border border-white/10 w-16 p-2 rounded text-center text-blue-500 font-black outline-none"
+                                                value={s.limit_perc} onBlur={(e) => updateAdSet(ad.id, 'limit_perc', parseFloat(e.target.value), `Cambió límite a ${e.target.value}% en AdSet ${ad.id}`)} />
                                         </td>
-                                        <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
+                                        <td className="p-6 text-center font-black">{i.actions?.[0]?.value || 0}</td>
                                         <td className="p-6">
-                                            <input
-                                                type="text"
-                                                className="bg-black/50 border border-white/10 p-2 rounded text-[10px] font-black uppercase text-zinc-300 w-32 outline-none italic tracking-widest"
-                                                value={s.turno}
-                                                onChange={e => updateSetting(ad.id, 'turno', e.target.value)}
-                                            />
+                                            <input type="text" className="bg-black/50 border border-white/10 p-2 rounded text-[10px] font-black uppercase text-zinc-300 w-32 outline-none"
+                                                defaultValue={s.turno} onBlur={(e) => updateAdSet(ad.id, 'turno', e.target.value)} />
                                         </td>
                                         <td className="p-6 text-center">
-                                            <button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen)} className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 text-white shadow-lg' : 'bg-white/5 text-zinc-700'}`}>
+                                            <button onClick={() => updateAdSet(ad.id, 'is_frozen', !s.is_frozen, `${!s.is_frozen ? 'Congeló' : 'Descongeló'} AdSet ${ad.id}`)}
+                                                className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 text-white' : 'bg-white/5 text-zinc-700'}`}>
                                                 {s.is_frozen ? <Icon name="lock" size={16} /> : <Icon name="unlock" size={16} />}
                                             </button>
                                         </td>
@@ -382,7 +176,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
 const App = () => {
     const [session, setSession] = useState(localStorage.getItem('session_user'));
-    return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
+    return !session ? <div className="p-20 text-blue-500 font-black text-center" onClick={() => { localStorage.setItem('session_user', 'Auditor'); setSession('Auditor'); }}>Haga clic para simular Login de Auditor</div>
+        : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
 };
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
