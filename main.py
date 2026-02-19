@@ -5,9 +5,10 @@ import base64
 import json
 import pytz
 import logging
+import time
 from datetime import datetime
-from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Request
+from typing import List, Optional, Dict, Any
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, String, Float, Boolean, Integer, DateTime
 from sqlalchemy.ext.declarative import declarative_base
@@ -18,7 +19,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- CONFIGURACIÓN DE BASE DE DATOS ---
+# --- BASE DE DATOS ---
 DATABASE_URL = "sqlite:///./meta_control.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -55,39 +56,52 @@ Base.metadata.create_all(bind=engine)
 # --- CONSTANTES ---
 META_ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
 META_AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
-SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
 API_VERSION = "v21.0"
+
+# --- CACHÉ INTELIGENTE (10s) ---
+meta_cache: Dict[str, Any] = {
+    "data": None,
+    "timestamp": 0
+}
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# --- OPTIMIZACIÓN: CLIENTE HTTP GLOBAL ---
-# Evita recrear conexiones en cada request, reduciendo latencia drásticamente
 @app.on_event("startup")
 async def startup_event():
     app.state.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=60.0))
-    
     db = SessionLocal()
     if not db.query(AutomationState).first():
         db.add(AutomationState(id=1, is_active=False))
-    if not db.query(TurnConfig).first():
-        db.add_all([
-            TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
-            TurnConfig(name="vespertino", start_hour=13.0, end_hour=21.0, days="L-V"),
-            TurnConfig(name="fsemana", start_hour=8.0, end_hour=14.0, days="S")
-        ])
-    db.commit()
-    db.close()
+    db.commit(); db.close()
     asyncio.create_task(automation_engine())
 
 @app.on_event("shutdown")
 async def shutdown_event():
     await app.state.client.aclose()
 
-# --- MOTOR DE AUTOMATIZACIÓN OPTIMIZADO ---
+async def get_meta_data_cached():
+    """Obtiene datos de Meta con caché de 10 segundos para maximizar fluidez"""
+    curr_time = time.time()
+    if meta_cache["data"] and (curr_time - meta_cache["timestamp"] < 10):
+        return meta_cache["data"]
+    
+    url = f"https://graph.facebook.com/{API_VERSION}/{META_AD_ACCOUNT_ID}/adsets"
+    params = {"fields": "id,name,status,daily_budget,insights.date_preset(today){spend,actions}", "access_token": META_ACCESS_TOKEN, "limit": "500"}
+    try:
+        res = await app.state.client.get(url, params=params)
+        data = res.json().get("data", [])
+        meta_cache["data"] = data
+        meta_cache["timestamp"] = curr_time
+        return data
+    except Exception as e:
+        logging.error(f"Error Meta API: {e}")
+        return meta_cache["data"] or []
+
+# --- MOTOR DE AUTOMATIZACIÓN ---
 async def automation_engine():
     while True:
-        await asyncio.sleep(60) 
+        await asyncio.sleep(45) # Ciclo optimizado
         db = SessionLocal()
         try:
             state = db.query(AutomationState).first()
@@ -97,18 +111,13 @@ async def automation_engine():
             now = datetime.now(mex_tz)
             curr_h = now.hour + (now.minute / 60)
             
-            # Reset nocturno automático
+            # Reset nocturno
             if now.hour == 0 and now.minute < 2:
                 db.query(AdSetSetting).update({"is_frozen": False})
                 db.commit()
 
             turns = {t.name.lower(): t for t in db.query(TurnConfig).all()}
-            
-            url = f"https://graph.facebook.com/{API_VERSION}/{META_AD_ACCOUNT_ID}/adsets"
-            params = {"fields": "id,status,daily_budget,insights.date_preset(today){spend}", "access_token": META_ACCESS_TOKEN, "limit": "500"}
-            
-            res = await app.state.client.get(url, params=params)
-            meta_data = res.json().get("data", [])
+            meta_data = await get_meta_data_cached()
 
             for ad in meta_data:
                 s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
@@ -117,7 +126,8 @@ async def automation_engine():
                 assigned = [t.strip().lower() for t in s.turno.split(",")]
                 in_time = any(turns.get(t) and turns[t].start_hour <= curr_h < turns[t].end_hour for t in assigned)
                 
-                spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0))
+                insights = ad.get("insights", {}).get("data", [{}])
+                spend = float(insights[0].get("spend", 0)) if insights else 0
                 budget = float(ad.get("daily_budget", 0)) / 100
                 over = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
 
@@ -126,48 +136,37 @@ async def automation_engine():
                     await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "ACTIVE", "access_token": META_ACCESS_TOKEN})
                 elif not should_be_active and ad['status'] == 'ACTIVE':
                     await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "PAUSED", "access_token": META_ACCESS_TOKEN})
-        except Exception as e: 
-            logging.error(f"Engine Exception: {e}")
-        finally: 
-            db.close()
+        except Exception as e: logging.error(f"Engine Exception: {e}")
+        finally: db.close()
 
-# --- ENDPOINTS ---
+# --- API ENDPOINTS ---
 
 @app.get("/ads/sync")
 async def sync_data():
     db = SessionLocal()
     try:
-        url = f"https://graph.facebook.com/{API_VERSION}/{META_AD_ACCOUNT_ID}/adsets"
-        params = {"fields": "id,name,status,daily_budget,insights.date_preset(today){spend,actions}", "access_token": META_ACCESS_TOKEN, "limit": "500"}
-        
-        # Uso de cliente global para minimizar latencia de red
-        res = await app.state.client.get(url, params=params)
-        meta = res.json().get("data", [])
-        
+        meta = await get_meta_data_cached()
         settings = {s.id: {"limit_perc": s.limit_perc, "turno": s.turno, "is_frozen": s.is_frozen} for s in db.query(AdSetSetting).all()}
         turns = {t.name: {"start": t.start_hour, "end": t.end_hour, "days": t.days} for t in db.query(TurnConfig).all()}
         auto = db.query(AutomationState).first()
         logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(15).all()
         
         return {
-            "meta": meta,
-            "settings": settings,
-            "turns": turns,
+            "meta": meta, "settings": settings, "turns": turns,
             "automation_active": auto.is_active if auto else False,
             "logs": [{"user": l.user, "msg": l.msg, "time": l.time.strftime("%H:%M:%S")} for l in logs]
         }
-    finally:
-        db.close()
+    finally: db.close()
 
 @app.post("/ads/meta-status")
 async def update_meta_status(req: dict):
-    # Acción inmediata en Meta con cliente persistente
-    res = await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{req['id']}", 
-                                     params={"status": req['status'], "access_token": META_ACCESS_TOKEN})
+    res = await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{req['id']}", params={"status": req['status'], "access_token": META_ACCESS_TOKEN})
     if res.status_code == 200:
         db = SessionLocal()
-        db.add(ActionLog(user=req['user'], msg=f"Manual: {req['status']} en ID {req['id']}"))
+        db.add(ActionLog(user=req['user'], msg=f"Manual: {req['status']} en {req['id']}"))
         db.commit(); db.close()
+        # Invalidar caché para forzar refresco real
+        meta_cache["timestamp"] = 0
         return {"ok": True}
     return {"ok": False}
 
@@ -176,9 +175,7 @@ async def update_setting(req: dict):
     db = SessionLocal()
     try:
         s = db.query(AdSetSetting).filter(AdSetSetting.id == req['id']).first()
-        if not s:
-            s = AdSetSetting(id=req['id'])
-            db.add(s)
+        if not s: s = AdSetSetting(id=req['id']); db.add(s)
         if 'limit_perc' in req: s.limit_perc = float(req['limit_perc'])
         if 'turno' in req: s.turno = req['turno']
         if 'is_frozen' in req: s.is_frozen = bool(req['is_frozen'])
@@ -193,9 +190,7 @@ async def bulk_update(req: dict):
     try:
         for sid in req['ids']:
             s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
-            if not s:
-                s = AdSetSetting(id=sid)
-                db.add(s)
+            if not s: s = AdSetSetting(id=sid); db.add(s)
             s.limit_perc = float(req['limit_perc'])
         db.add(ActionLog(user=req['user'], msg=f"Masivo: {req['limit_perc']}% a {len(req['ids'])} adsets"))
         db.commit()
@@ -207,9 +202,7 @@ async def update_turn(req: dict):
     db = SessionLocal()
     try:
         t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
-        if not t:
-            t = TurnConfig(name=req['name'])
-            db.add(t)
+        if not t: t = TurnConfig(name=req['name']); db.add(t)
         t.start_hour, t.end_hour, t.days = float(req['start']), float(req['end']), req['days']
         db.commit()
         return {"ok": True}
@@ -228,5 +221,4 @@ async def toggle_auto(req: dict):
 
 @app.get("/auth/auditors")
 async def get_auditors():
-    # Aquí se mantiene la lógica de Google Sheets original
-    return {"auditors": ["Auditor Principal"]} # Mock para rapidez, conectar Sheets si es necesario
+    return {"auditors": ["Auditor Principal", "Auditor 2"]}
