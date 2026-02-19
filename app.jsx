@@ -1,12 +1,11 @@
 /**
- * SISTEMA: Control Meta Pro v6.6 (SQLite Only)
- * FIX: Error 'exports is not defined' corregido para Nginx/Babel Standalone.
- * DINAMISMO: Solo el icono de actualización gira.
- * FUNCIONES: Control manual de Meta, Gestión de Turnos y Edición Grupal.
+ * SISTEMA: Control Meta Pro v2.20 (Punto de Retorno)
+ * DINAMISMO: Solo el icono de recarga gira.
+ * FUNCIONES: Control manual de Meta (Encendido/Apagado por AdSet) habilitado.
  */
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-// --- COMPONENTE: ICONOS (Manejo Seguro) ---
+// --- COMPONENTE: ICONOS (Manejo Seguro de Animación) ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
 
@@ -53,7 +52,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
     const [showLogs, setShowLogs] = useState(false);
     const [view, setView] = useState('panel');
 
-    // Punto 2, 9, 18: Polling de sincronización
+    // Sincronización de datos
     const fetchSync = useCallback(async (silent = false) => {
         if (!silent) setSyncing(true);
         try {
@@ -66,14 +65,14 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
     useEffect(() => {
         fetchSync();
-        const interval = setInterval(() => fetchSync(true), 20000);
+        const interval = setInterval(() => fetchSync(true), 25000);
         return () => clearInterval(interval);
     }, [fetchSync]);
 
-    // Punto 2/3: Control Manual de Estado en Meta
+    // AJUSTE: Control Manual de Estado en Meta
     const toggleMetaStatus = async (id, currentStatus) => {
         const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-        // Actualización optimista (sin delay visual)
+        // Respuesta inmediata visual
         setData(prev => ({
             ...prev,
             meta: prev.meta.map(ad => ad.id === id ? { ...ad, status: nextStatus } : ad)
@@ -122,14 +121,14 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
     const sortedData = useMemo(() => {
         return [...data.meta].filter(ad => ALLOWED_IDS.includes(ad.id))
-            .sort((a, b) => (a.status === 'ACTIVE' ? -1 : 1)); // Punto 12: Activos arriba
+            .sort((a, b) => (a.status === 'ACTIVE' ? -1 : 1));
     }, [data.meta]);
 
     const stats = useMemo(() => sortedData.reduce((acc, ad) => {
         const i = ad.insights?.data?.[0] || {};
         acc.s += parseFloat(i.spend || 0); acc.r += parseInt(i.actions?.[0]?.value || 0);
         if (ad.status === 'ACTIVE') acc.a++; return acc;
-    }, { s: 0, r: 0, a: 0 }), [sortedData]); // Punto 16: Sumatoria superior
+    }, { s: 0, r: 0, a: 0 }), [sortedData]);
 
     return (
         <div className="min-h-screen bg-[#020202] text-white p-4 lg:p-10 font-sans italic tracking-tight">
@@ -166,12 +165,13 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             <Icon name="bell" size={18} className={data.logs.length > 0 ? "text-blue-500" : "text-zinc-500"} />
                             {data.logs.length > 0 && <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full animate-ping"></span>}
                         </button>
+                        {/* ICONO SALIR: Estático */}
                         <button onClick={onLogout} className="p-2 text-rose-600 hover:text-rose-400"><Icon name="log-out" size={18} /></button>
                     </div>
                 </div>
             </header>
 
-            {/* ALERTA DE ACCIÓN (Punto 10) */}
+            {/* PANEL DE LOGS */}
             {showLogs && (
                 <div className="fixed inset-0 z-50 flex items-start justify-end p-10 pointer-events-none">
                     <div className="w-80 bg-zinc-900 border border-white/10 rounded-[2rem] shadow-2xl p-6 pointer-events-auto animate-fade-in">
@@ -191,12 +191,12 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             )}
 
-            {/* NAVIGATION TABS */}
+            {/* NAVEGACIÓN */}
             <div className="flex gap-4 mb-6">
                 <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
                 <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
 
-                {/* ICONO REFRESH (Solo este gira) */}
+                {/* ICONO REFRESH: Único con spin dinámico */}
                 <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all border border-white/5">
                     <Icon name="refresh-cw" spin={syncing} size={16} className="text-blue-500" />
                 </button>
@@ -204,7 +204,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
             {view === 'panel' ? (
                 <>
-                    {/* ACCIONES GRUPALES (Punto 5) */}
+                    {/* ACCIONES GRUPALES */}
                     <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl animate-fade-in">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
                             <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
@@ -212,12 +212,12 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             <button onClick={handleBulkAction} className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded uppercase hover:bg-blue-500 transition-all">Aplicar a {selectedIds.length}</button>
                         </div>
                         <button onClick={async () => {
-                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Realizó descongelado masivo" }) });
+                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Descongeló todos" }) });
                             fetchSync(true);
                         }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest">Descongelar Todos</button>
                     </div>
 
-                    {/* MAIN TABLE (Punto 11-15) */}
+                    {/* TABLA PRINCIPAL */}
                     <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
@@ -229,7 +229,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                         <th className="p-6 text-center">Inversión</th>
                                         <th className="p-6 text-center text-blue-500">Stop %</th>
                                         <th className="p-6 text-center">Resultados</th>
-                                        <th className="p-6">Tags Turno</th>
+                                        <th className="p-6">Turno</th>
                                         <th className="p-6 text-center">Freeze</th>
                                     </tr>
                                 </thead>
@@ -253,29 +253,26 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                     />
                                                 </td>
                                                 <td className="p-6">
-                                                    {/* Punto 11: LED + Control Manual (Punto 2/3) */}
+                                                    {/* LED + BOTÓN DE ENCENDIDO/APAGADO MANUAL */}
                                                     <div className="flex items-center gap-3">
                                                         <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/30 border border-rose-500/10'}`}></div>
                                                         <button
                                                             onClick={() => toggleMetaStatus(ad.id, ad.status)}
-                                                            className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg'}`}
+                                                            className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all transform active:scale-95 ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg'}`}
                                                         >
-                                                            {active ? 'Pausar' : 'Activar'}
+                                                            {active ? 'Apagar' : 'Encender'}
                                                         </button>
                                                     </div>
                                                 </td>
-                                                {/* Punto 13: Nombre sin truncar */}
                                                 <td className="p-6 whitespace-normal leading-relaxed font-black uppercase text-[11px] italic tracking-tight">{ad.name}</td>
                                                 <td className="p-6 text-center">
                                                     <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10 border border-rose-500/20' : 'text-blue-400 bg-blue-500/10'}`}>
                                                         ${spend.toFixed(2)} ({perc.toFixed(0)}%)
                                                     </div>
                                                 </td>
-                                                {/* Punto 6: Cambio individual */}
                                                 <td className="p-6 text-center">
-                                                    <input type="number" className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none" value={s.limit_perc} onBlur={(e) => updateSetting(ad.id, 'limit_perc', parseFloat(e.target.value), `Ajustó ppto a ${e.target.value}% en ${ad.id}`)} />
+                                                    <input type="number" className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none" value={s.limit_perc} onBlur={(e) => updateSetting(ad.id, 'limit_perc', parseFloat(e.target.value), `PPTO: ${e.target.value}% en ${ad.id}`)} />
                                                 </td>
-                                                {/* Punto 15: Lectura resultados */}
                                                 <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
                                                 <td className="p-6">
                                                     <input type="text" className="bg-black/50 border border-white/10 p-2 rounded-xl text-[10px] font-black uppercase text-zinc-400 w-32 outline-none" defaultValue={s.turno} onBlur={(e) => updateSetting(ad.id, 'turno', e.target.value)} />
@@ -294,7 +291,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </>
             ) : (
-                /* GESTIÓN DE TURNOS (Punto 4) */
+                /* GESTIÓN DE TURNOS */
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
                     {Object.keys(data.turns).length > 0 ? Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
@@ -302,23 +299,22 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                 <div className="bg-blue-600/10 p-3 rounded-2xl"><Icon name="clock" className="text-blue-500" size={20} /></div>
                                 <h2 className="text-lg font-black uppercase tracking-widest">{name}</h2>
                             </div>
-                            <div className="space-y-6">
+                            <div className="space-y-6 text-left">
                                 <div>
                                     <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Hora Inicio (Decimal 24h)</label>
-                                    <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold" value={config.start} onChange={e => updateTurn(name, e.target.value, config.end, config.days)} />
+                                    <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none" value={config.start} onChange={e => updateTurn(name, e.target.value, config.end, config.days)} />
                                 </div>
                                 <div>
                                     <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Hora Fin (Decimal 24h)</label>
-                                    <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold" value={config.end} onChange={e => updateTurn(name, config.start, e.target.value, config.days)} />
+                                    <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none" value={config.end} onChange={e => updateTurn(name, config.start, e.target.value, config.days)} />
                                 </div>
                                 <div>
-                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Días de Actividad</label>
-                                    <input type="text" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold uppercase" value={config.days} onChange={e => updateTurn(name, config.start, config.end, e.target.value)} />
+                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Días Semanales</label>
+                                    <input type="text" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold uppercase outline-none" value={config.days} onChange={e => updateTurn(name, config.start, config.end, e.target.value)} />
                                 </div>
                             </div>
-                            <p className="mt-6 text-[9px] text-zinc-600 uppercase font-bold tracking-widest leading-relaxed">Ej: 20.5 = 8:30 PM. Días: L-V o L,M,V.</p>
                         </div>
-                    )) : <p className="text-zinc-500 uppercase font-black italic text-center w-full">Cargando configuración de turnos...</p>}
+                    )) : <p className="text-zinc-500 uppercase font-black italic text-center w-full">Configurando turnos...</p>}
                 </div>
             )}
         </div>
@@ -326,7 +322,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 };
 
 /**
- * LOGIN SCREEN (Punto 1: Droplist desde Sheets)
+ * LOGIN SCREEN
  */
 const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
@@ -375,7 +371,7 @@ const LoginScreen = ({ onLogin }) => {
                     </div>
                     <div className="space-y-2">
                         <label className="text-[10px] font-black text-zinc-500 uppercase ml-2">Contraseña</label>
-                        <input type="password" placeholder="••••••••" required className="w-full bg-black border border-white/10 rounded-2xl p-5 text-white outline-none focus:border-blue-500 transition-all" onChange={e => setPass(e.target.value)} />
+                        <input type="password" placeholder="••••••••" required className="w-full bg-black border border-white/10 rounded-2xl p-5 text-white outline-none focus:border-blue-600 transition-all" onChange={e => setPass(e.target.value)} />
                     </div>
                     <button className="w-full bg-blue-600 py-5 rounded-2xl font-black uppercase text-white shadow-xl hover:bg-blue-500 transition-all transform active:scale-[0.98]">
                         {loading ? "Iniciando..." : "Ingresar"}
@@ -392,6 +388,6 @@ const App = () => {
     return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
 };
 
-// Renderizado directo para Babel Standalone (Sin export default que cause error de 'exports')
+// Renderizado directo compatible con Babel Standalone
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
