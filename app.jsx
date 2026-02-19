@@ -1,7 +1,7 @@
 /**
- * SISTEMA: Control Meta Pro v2.20 (Estable)
- * FIX: Eliminado 'export default' para corregir error de 'exports is not defined'.
- * FUNCIONALIDAD: Solo gira el icono de carga, Droplist de turnos y Control manual.
+ * SISTEMA: Control Meta Pro v2.20 (Actualizado)
+ * FIX: Recuperación de Turnos (Carga y Visualización).
+ * AJUSTES: Iconos estáticos (solo gira recarga), Droplist de turnos y Control manual.
  */
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
@@ -71,7 +71,7 @@ const TurnSelector = ({ currentTurnos, availableTurns, onUpdate }) => {
 
             {isOpen && (
                 <div className="absolute z-50 mt-2 w-48 bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-2 animate-in fade-in zoom-in duration-200">
-                    <p className="text-[8px] font-black text-zinc-500 uppercase p-2 border-b border-white/5 mb-1 text-center">Seleccionar Turnos</p>
+                    <p className="text-[8px] font-black text-zinc-500 uppercase p-2 border-b border-white/5 mb-1 text-center">Asignar Turnos</p>
                     {Object.keys(availableTurns).map(name => (
                         <div
                             key={name}
@@ -83,7 +83,7 @@ const TurnSelector = ({ currentTurnos, availableTurns, onUpdate }) => {
                         </div>
                     ))}
                     {Object.keys(availableTurns).length === 0 && (
-                        <p className="text-[9px] text-zinc-600 p-2 italic text-center">No hay turnos</p>
+                        <p className="text-[9px] text-zinc-600 p-2 italic text-center text-rose-500">Error: Crea turnos primero</p>
                     )}
                 </div>
             )}
@@ -114,7 +114,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
         try {
             const res = await fetch(`${API_URL}/ads/sync`);
             const json = await res.json();
-            setData(json);
+            if (json) setData(json);
         } catch (e) { console.error("Error sincronización", e); }
         finally { if (!silent) setSyncing(false); }
     }, []);
@@ -266,7 +266,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                         <button onClick={async () => {
                             await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Reset de congelados" }) });
                             fetchSync(true);
-                        }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest">Descongelar Todos</button>
+                        }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest text-center">Descongelar Todos</button>
                     </div>
 
                     <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
@@ -280,7 +280,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                         <th className="p-6 text-center">Inversión</th>
                                         <th className="p-6 text-center text-blue-500">Stop %</th>
                                         <th className="p-6 text-center">Resultados</th>
-                                        <th className="p-6">Turnos</th>
+                                        <th className="p-6">Asignar Turnos</th>
                                         <th className="p-6 text-center">Freeze</th>
                                     </tr>
                                 </thead>
@@ -340,6 +340,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </>
             ) : (
+                /* GESTIÓN DE TURNOS (v2.20) */
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in text-left">
                     {Object.keys(data.turns).length > 0 ? Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
@@ -362,7 +363,13 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                 </div>
                             </div>
                         </div>
-                    )) : <p className="text-zinc-500 uppercase font-black italic text-center w-full">Cargando turnos...</p>}
+                    )) : (
+                        <div className="col-span-full text-center py-20 bg-zinc-900/20 rounded-[3rem] border border-white/5 border-dashed">
+                            <Icon name="Search" size={40} className="text-zinc-800 mb-4" />
+                            <p className="text-zinc-500 uppercase font-black italic">Sin turnos configurados en el sistema.</p>
+                            <p className="text-[10px] text-zinc-700 mt-2 uppercase">El servidor cargará los turnos por defecto al reiniciar.</p>
+                        </div>
+                    )}
                 </div>
             )}
         </div>
@@ -432,6 +439,6 @@ function App() {
     return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
 }
 
-// Renderizado directo para Babel Standalone sin export default
+// Renderizado directo para Babel Standalone
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);

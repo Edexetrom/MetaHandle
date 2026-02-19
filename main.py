@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- BASE DE DATOS LOCAL (v2.20) ---
+# --- BASE DE DATOS LOCAL ---
 DATABASE_URL = "sqlite:///./meta_control.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -58,11 +58,27 @@ META_AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
 SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
 API_VERSION = "v21.0"
 
+def get_google_creds():
+    try:
+        creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+        if creds_b64:
+            info = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+        else:
+            info = {
+                "type": os.environ.get("GOOGLE_TYPE"),
+                "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
+                "private_key": os.environ.get("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+                "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        return service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+    except: return None
+
 # --- MOTOR DE AUTOMATIZACIÓN ---
 async def automation_engine():
-    timeout_cfg = httpx.Timeout(45.0, read=45.0)
+    timeout_cfg = httpx.Timeout(60.0, read=60.0)
     while True:
-        await asyncio.sleep(60) 
+        await asyncio.sleep(120) 
         db = SessionLocal()
         try:
             state = db.query(AutomationState).first()
@@ -87,7 +103,7 @@ async def automation_engine():
                 for ad in meta_data:
                     s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
                     if not s or s.is_frozen: continue
-                    
+
                     assigned_turns = [t.strip().lower() for t in s.turno.split(",")]
                     in_time = any(turns.get(t) and turns[t].start_hour <= curr_h < turns[t].end_hour for t in assigned_turns)
                     
@@ -109,16 +125,45 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.on_event("startup")
 async def startup():
     db = SessionLocal()
+    # Asegurar estado de automatización
     if not db.query(AutomationState).first():
         db.add(AutomationState(id=1, is_active=False))
-        db.commit()
+    
+    # SEMBRAR TURNOS (Seed) para que aparezcan en la interfaz
+    if not db.query(TurnConfig).first():
+        db.add_all([
+            TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
+            TurnConfig(name="vespertino", start_hour=13.0, end_hour=21.0, days="L-V"),
+            TurnConfig(name="fsemana", start_hour=8.0, end_hour=14.0, days="S")
+        ])
+    
+    db.commit()
     db.close()
     asyncio.create_task(automation_engine())
+
+@app.get("/auth/auditors")
+async def get_auditors():
+    creds = get_google_creds()
+    if not creds: return {"auditors": ["Auditor Principal"]}
+    service = build('sheets', 'v4', credentials=creds)
+    res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+    return {"auditors": [row[0] for row in res.get('values', [])[1:] if row]}
+
+@app.post("/auth/login")
+async def login(req: dict):
+    if req['nombre'] == "Auditor Principal" and req['password'] == "1234": return {"user": "Auditor Principal"}
+    creds = get_google_creds()
+    if not creds: raise HTTPException(401)
+    service = build('sheets', 'v4', credentials=creds)
+    res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+    for row in res.get('values', [])[1:]:
+        if row[0] == req['nombre'] and row[1] == req['password']: return {"user": row[0]}
+    raise HTTPException(401)
 
 @app.get("/ads/sync")
 async def sync_data():
     db = SessionLocal()
-    timeout_cfg = httpx.Timeout(45.0, read=45.0)
+    timeout_cfg = httpx.Timeout(60.0, read=60.0)
     try:
         async with httpx.AsyncClient(timeout=timeout_cfg) as client:
             url = f"https://graph.facebook.com/{API_VERSION}/{META_AD_ACCOUNT_ID}/adsets"
@@ -132,7 +177,9 @@ async def sync_data():
         logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(15).all()
         
         return {
-            "meta": meta, "settings": settings, "turns": turns,
+            "meta": meta,
+            "settings": settings,
+            "turns": turns,
             "automation_active": auto.is_active if auto else False,
             "logs": [{"user": l.user, "msg": l.msg, "time": l.time.strftime("%H:%M:%S")} for l in logs]
         }
@@ -140,12 +187,11 @@ async def sync_data():
 
 @app.post("/ads/meta-status")
 async def update_meta_status(req: dict):
-    # Punto de retorno v2.20: Control manual inmediato
     async with httpx.AsyncClient(timeout=25.0) as client:
         res = await client.post(f"https://graph.facebook.com/{API_VERSION}/{req['id']}", params={"status": req['status'], "access_token": META_ACCESS_TOKEN})
         if res.status_code == 200:
             db = SessionLocal()
-            db.add(ActionLog(user=req['user'], msg=f"Cambió {req['id']} a {req['status']} manualmente"))
+            db.add(ActionLog(user=req['user'], msg=f"Cambió manualmente {req['id']} a {req['status']}"))
             db.commit(); db.close()
             return {"ok": True}
     return {"ok": False}
@@ -155,7 +201,9 @@ async def update_setting(req: dict):
     db = SessionLocal()
     try:
         s = db.query(AdSetSetting).filter(AdSetSetting.id == req['id']).first()
-        if not s: s = AdSetSetting(id=req['id']); db.add(s)
+        if not s:
+            s = AdSetSetting(id=req['id'])
+            db.add(s)
         if 'limit_perc' in req: s.limit_perc = float(req['limit_perc'])
         if 'turno' in req: s.turno = req['turno']
         if 'is_frozen' in req: s.is_frozen = bool(req['is_frozen'])
@@ -170,9 +218,11 @@ async def bulk_update(req: dict):
     try:
         for sid in req['ids']:
             s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
-            if not s: s = AdSetSetting(id=sid); db.add(s)
+            if not s:
+                s = AdSetSetting(id=sid)
+                db.add(s)
             s.limit_perc = float(req['limit_perc'])
-        db.add(ActionLog(user=req['user'], msg=f"Ajuste masivo {req['limit_perc']}% a {len(req['ids'])} conjuntos"))
+        db.add(ActionLog(user=req['user'], msg=f"Límite masivo {req['limit_perc']}% en {len(req['ids'])} conjuntos"))
         db.commit()
         return {"ok": True}
     finally: db.close()
@@ -182,8 +232,12 @@ async def update_turn(req: dict):
     db = SessionLocal()
     try:
         t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
-        if not t: t = TurnConfig(name=req['name']); db.add(t)
-        t.start_hour, t.end_hour, t.days = float(req['start']), float(req['end']), req['days']
+        if not t:
+            t = TurnConfig(name=req['name'])
+            db.add(t)
+        t.start_hour = float(req['start'])
+        t.end_hour = float(req['end'])
+        t.days = req['days']
         db.commit()
         return {"ok": True}
     finally: db.close()
@@ -194,7 +248,7 @@ async def toggle_auto(req: dict):
     try:
         auto = db.query(AutomationState).first()
         auto.is_active = not auto.is_active
-        db.add(ActionLog(user=req['user'], msg=f"{'Encendió' if auto.is_active else 'Apagó'} automatización"))
+        db.add(ActionLog(user=req['user'], msg=f"{'Encendió' if auto.is_active else 'Apagó'} la automatización"))
         db.commit()
         return {"is_active": auto.is_active}
     finally: db.close()
