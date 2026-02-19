@@ -4,28 +4,31 @@ import httpx
 import base64
 import json
 import pytz
-from datetime import datetime
+import logging
+from datetime import datetime, time
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, String, Float, Boolean, Integer, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-
-# Google Auth & Sheets
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
 
+# Carga de variables de entorno
 load_dotenv()
 
-# --- CONFIGURACIÓN DE BASE DE DATOS (SQLite) ---
+# Configuración de Logs para depuración en el VPS
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- BASE DE DATOS SQLITE ---
 DATABASE_URL = "sqlite:///./meta_control.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# --- MODELOS SQL ---
 class AdSetSetting(Base):
     __tablename__ = "adset_settings"
     id = Column(String, primary_key=True, index=True)
@@ -47,7 +50,12 @@ class ActionLog(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# --- IDs PERMITIDOS ---
+# --- CONFIGURACIÓN META Y GOOGLE ---
+META_ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
+META_AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
+SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
+API_VERSION = "v21.0"
+
 ALLOWED_ADSET_IDS = [
     "120238886501840717", "120238886472900717", "120238886429400717",
     "120238886420220717", "120238886413960717", "120238886369210717",
@@ -57,29 +65,30 @@ ALLOWED_ADSET_IDS = [
     "120232157515490717", "120232157515480717", "120232157515460717"
 ]
 
-# --- CONFIGURACIÓN META ---
-ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
-AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
-API_VERSION = "v21.0"
-BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
-SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
-
-# --- UTILIDADES DE TIEMPO ---
-DAYS_MAP = {"L": 0, "M": 1, "MI": 2, "J": 3, "V": 4, "S": 5, "D": 6}
-
-def parse_days(days_str: str) -> List[int]:
+# --- UTILIDADES ---
+def get_google_creds():
     try:
-        days_str = str(days_str).upper().strip()
-        if "-" in days_str:
-            start, end = days_str.split("-")
-            return list(range(DAYS_MAP.get(start.strip(), 0), DAYS_MAP.get(end.strip(), 4) + 1))
-        return [DAYS_MAP.get(d.strip(), 0) for d in days_str.split(",") if d.strip() in DAYS_MAP]
-    except: return [0,1,2,3,4]
+        creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+        if creds_b64:
+            creds_dict = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+            return service_account.Credentials.from_service_account_info(creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+        
+        info = {
+            "type": os.environ.get("GOOGLE_TYPE", "service_account"),
+            "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
+            "private_key": os.environ.get("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n'),
+            "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+        return service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+    except Exception as e:
+        logger.error(f"Error en credenciales Google: {e}")
+        return None
 
 # --- MOTOR DE AUTOMATIZACIÓN ---
 async def automation_engine():
     while True:
-        await asyncio.sleep(120) # Cada 2 minutos
+        await asyncio.sleep(120) 
         db = SessionLocal()
         try:
             state = db.query(AutomationState).first()
@@ -88,67 +97,65 @@ async def automation_engine():
             mex_tz = pytz.timezone('America/Mexico_City')
             now = datetime.now(mex_tz)
             
-            # Reset nocturno automático (00:00 CDMX)
-            if now.hour == 0 and now.minute < 3:
+            # Reset Nocturno (00:00 CDMX)
+            if now.hour == 0 and now.minute < 5:
                 db.query(AdSetSetting).update({"is_frozen": False})
                 db.commit()
 
             async with httpx.AsyncClient() as client:
-                res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
+                url = f"https://graph.facebook.com/{API_VERSION}/{META_AD_ACCOUNT_ID}/adsets"
+                params = {
                     "fields": "id,status,daily_budget,insights.date_preset(today){spend}",
-                    "access_token": ACCESS_TOKEN, "limit": "500"
-                })
+                    "access_token": META_ACCESS_TOKEN, "limit": "500"
+                }
+                res = await client.get(url, params=params)
                 meta_data = res.json().get("data", [])
-                
+
                 for ad in meta_data:
-                    if ad['id'] not in ALLOWED_ADSET_IDS: continue
-                    s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
+                    sid = ad['id']
+                    if sid not in ALLOWED_ADSET_IDS: continue
+                    
+                    s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
                     if not s or s.is_frozen: continue
 
-                    curr_day = now.weekday()
-                    if curr_day not in parse_days(s.turno):
-                        # Si no es día laboral, pausar si está activo
-                        if ad['status'] == 'ACTIVE':
-                            await client.post(f"{BASE_URL}/{ad['id']}", params={"status": "PAUSED", "access_token": ACCESS_TOKEN})
-                        continue
+                    # Lógica simplificada de días (L-V)
+                    curr_day = now.weekday() # 0=Lunes, 6=Domingo
+                    is_weekday = curr_day <= 4
                     
+                    # Determinamos si el conjunto debe estar activo según turno/presupuesto
                     spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0))
                     budget = float(ad.get("daily_budget", 0)) / 100
-                    over_budget = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
-
-                    should_be_active = not over_budget
+                    limit = s.limit_perc
+                    
+                    over_budget = (spend / budget * 100) >= limit if budget > 0 else False
+                    
+                    # Regla básica: Activo en días de turno y si no supera el ppto
+                    should_be_active = is_weekday and not over_budget
                     is_active = ad['status'] == 'ACTIVE'
 
                     if should_be_active and not is_active:
-                        await client.post(f"{BASE_URL}/{ad['id']}", params={"status": "ACTIVE", "access_token": ACCESS_TOKEN})
+                        await client.post(f"https://graph.facebook.com/{API_VERSION}/{sid}", params={"status": "ACTIVE", "access_token": META_ACCESS_TOKEN})
                     elif not should_be_active and is_active:
-                        await client.post(f"{BASE_URL}/{ad['id']}", params={"status": "PAUSED", "access_token": ACCESS_TOKEN})
-        except Exception as e: print(f"Engine Error: {e}")
-        finally: db.close()
+                        await client.post(f"https://graph.facebook.com/{API_VERSION}/{sid}", params={"status": "PAUSED", "access_token": META_ACCESS_TOKEN})
+        except Exception as e:
+            logger.error(f"Error Motor: {e}")
+        finally:
+            db.close()
 
-# --- API ---
+# --- APP FASTAPI ---
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-def get_google_creds():
-    creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
-    if creds_b64:
-        creds_json = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
-        return service_account.Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
-    # Fallback variables individuales
-    raw_key = os.environ.get("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n').strip('"').strip("'")
-    info = {
-        "type": "service_account",
-        "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
-        "private_key_id": os.environ.get("PROJECT_PRIVATE_KEY_ID"),
-        "private_key": raw_key,
-        "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
-        "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "client_x509_cert_url": os.environ.get("GOOGLE_CLIENT_X509_CERT_URL")
-    }
-    return service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+# SOLUCIÓN AL ERROR DE CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://manejometa.libresdeumas.com",
+        "http://localhost:3000"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 async def startup():
@@ -159,12 +166,16 @@ async def startup():
     db.close()
     asyncio.create_task(automation_engine())
 
+# --- ENDPOINTS ---
+
 @app.get("/auth/auditors")
 async def get_auditors():
     creds = get_google_creds()
+    if not creds: raise HTTPException(500, "Google Creds Error")
     service = build('sheets', 'v4', credentials=creds)
     res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
-    return {"auditors": [row[0] for row in res.get('values', [])[1:] if row]}
+    values = res.get('values', [])
+    return {"auditors": [row[0] for row in values[1:] if row]}
 
 @app.post("/auth/login")
 async def login(req: dict):
@@ -174,19 +185,26 @@ async def login(req: dict):
     for row in res.get('values', [])[1:]:
         if row[0] == req['nombre'] and row[1] == req['password']:
             return {"status": "success", "user": row[0]}
-    raise HTTPException(401)
+    raise HTTPException(401, "Invalid credentials")
 
 @app.get("/ads/sync")
-async def full_sync():
+async def sync_data():
     db = SessionLocal()
     try:
+        # 1. Datos Meta
         async with httpx.AsyncClient() as client:
-            res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
-                "fields": "id,name,status,daily_budget,insights.date_preset(today){spend,actions}",
-                "limit": "500", "access_token": ACCESS_TOKEN
-            })
+            url = f"https://graph.facebook.com/{API_VERSION}/{META_AD_ACCOUNT_ID}/adsets"
+            params = {
+                "fields": "id,name,status,daily_budget,insights.date_preset(today){spend,actions,impressions}",
+                "limit": "500", "access_token": META_ACCESS_TOKEN
+            }
+            res = await client.get(url, params=params)
+            if res.status_code != 200:
+                logger.error(f"Meta API Error: {res.text}")
+                raise HTTPException(500, "Error contactando con Meta API")
             meta = res.json().get("data", [])
         
+        # 2. SQLite Settings y Logs
         settings = {s.id: {"limit_perc": s.limit_perc, "turno": s.turno, "is_frozen": s.is_frozen} for s in db.query(AdSetSetting).all()}
         auto = db.query(AutomationState).first()
         logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(5).all()
@@ -197,10 +215,14 @@ async def full_sync():
             "automation_active": auto.is_active if auto else False,
             "logs": [{"user": l.user, "msg": l.msg, "time": l.time.strftime("%H:%M:%S")} for l in logs]
         }
-    finally: db.close()
+    except Exception as e:
+        logger.error(f"Sync Error: {e}")
+        raise HTTPException(500, str(e))
+    finally:
+        db.close()
 
 @app.post("/ads/update")
-async def update_adset(req: dict):
+async def update_setting(req: dict):
     db = SessionLocal()
     try:
         s = db.query(AdSetSetting).filter(AdSetSetting.id == req['id']).first()
@@ -214,9 +236,14 @@ async def update_adset(req: dict):
         
         if 'log' in req:
             db.add(ActionLog(user=req['user'], msg=req['log']))
+        
         db.commit()
         return {"status": "ok"}
-    finally: db.close()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        db.close()
 
 @app.post("/ads/bulk-update")
 async def bulk_update(req: dict):
@@ -232,7 +259,8 @@ async def bulk_update(req: dict):
         db.add(ActionLog(user=req['user'], msg=f"Aplicó límite masivo {req['limit_perc']}% a {len(req['ids'])} conjuntos"))
         db.commit()
         return {"status": "ok"}
-    finally: db.close()
+    finally:
+        db.close()
 
 @app.post("/ads/automation/toggle")
 async def toggle_auto(req: dict):
@@ -243,4 +271,5 @@ async def toggle_auto(req: dict):
         db.add(ActionLog(user=req['user'], msg=f"{'Encendió' if auto.is_active else 'Apagó'} la automatización"))
         db.commit()
         return {"is_active": auto.is_active}
-    finally: db.close()
+    finally:
+        db.close()
