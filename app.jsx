@@ -1,9 +1,7 @@
 /**
- * SISTEMA: Control Meta Pro v2.20 (Actualizado)
- * AJUSTES: 
- * 1. Iconos estáticos (solo gira el de recarga).
- * 2. Selector de turnos multi-select (droplist).
- * 3. Scope de Lucide corregido para evitar rotación global.
+ * SISTEMA: Control Meta Pro v2.20 (Estable)
+ * FIX: Eliminado 'export default' para corregir error de 'exports is not defined'.
+ * FUNCIONALIDAD: Solo gira el icono de carga, Droplist de turnos y Control manual.
  */
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
@@ -13,10 +11,7 @@ const Icon = ({ name, size = 16, className = "", spin = false }) => {
 
     useEffect(() => {
         if (window.lucide && iconRef.current) {
-            // Inyectamos el elemento i para Lucide
             iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
-            // Ejecutamos createIcons limitando el scope al elemento actual (root)
-            // Esto evita que el atributo 'spin' afecte a otros iconos en la página
             window.lucide.createIcons({
                 attrs: {
                     'stroke-width': 2,
@@ -76,7 +71,7 @@ const TurnSelector = ({ currentTurnos, availableTurns, onUpdate }) => {
 
             {isOpen && (
                 <div className="absolute z-50 mt-2 w-48 bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-2 animate-in fade-in zoom-in duration-200">
-                    <p className="text-[8px] font-black text-zinc-500 uppercase p-2 border-b border-white/5 mb-1">Seleccionar Turnos</p>
+                    <p className="text-[8px] font-black text-zinc-500 uppercase p-2 border-b border-white/5 mb-1 text-center">Seleccionar Turnos</p>
                     {Object.keys(availableTurns).map(name => (
                         <div
                             key={name}
@@ -88,7 +83,7 @@ const TurnSelector = ({ currentTurnos, availableTurns, onUpdate }) => {
                         </div>
                     ))}
                     {Object.keys(availableTurns).length === 0 && (
-                        <p className="text-[9px] text-zinc-600 p-2 italic">No hay turnos configurados</p>
+                        <p className="text-[9px] text-zinc-600 p-2 italic text-center">No hay turnos</p>
                     )}
                 </div>
             )}
@@ -193,7 +188,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
         <div className="min-h-screen bg-[#020202] text-white p-4 lg:p-10 font-sans italic tracking-tight">
 
             {/* HEADER STATISTICS */}
-            <header className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <header className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8 text-left">
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between shadow-xl">
                     <div><p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Automatización</p><p className="text-xl font-black uppercase tracking-tighter">{data.automation_active ? 'Activa' : 'Apagada'}</p></div>
                     <button
@@ -224,8 +219,9 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             <Icon name="Bell" size={18} className={data.logs.length > 0 ? "text-blue-500" : "text-zinc-500"} />
                             {data.logs.length > 0 && <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full animate-ping"></span>}
                         </button>
-                        {/* ICONO SALIR: Estático */}
-                        <button onClick={onLogout} className="p-2 text-rose-600 hover:text-rose-400"><Icon name="LogOut" size={18} /></button>
+                        <button onClick={onLogout} className="p-2 text-rose-600 hover:text-rose-400 transition-all">
+                            <Icon name="LogOut" size={18} />
+                        </button>
                     </div>
                 </div>
             </header>
@@ -250,11 +246,10 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             )}
 
-            {/* NAVEGACIÓN Y CARGA (DINAMISMO ÚNICO AQUÍ) */}
+            {/* NAVEGACIÓN Y CARGA */}
             <div className="flex gap-4 mb-6">
                 <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
                 <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
-                {/* Único icono que gira */}
                 <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl border border-white/5 shadow-xl transition-all hover:bg-zinc-800">
                     <Icon name="RefreshCw" spin={syncing} size={16} className="text-blue-500" />
                 </button>
@@ -262,7 +257,6 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
             {view === 'panel' ? (
                 <>
-                    {/* BULK ACTIONS */}
                     <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl animate-fade-in">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10 shadow-inner">
                             <Icon name="Zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
@@ -275,9 +269,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
                         }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest">Descongelar Todos</button>
                     </div>
 
-                    {/* TABLA PRINCIPAL */}
                     <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
-                        <div className="overflow-x-auto">
+                        <div className="overflow-x-auto text-left">
                             <table className="w-full text-left">
                                 <thead>
                                     <tr className="bg-black text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em] border-b border-white/5">
@@ -347,7 +340,6 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </>
             ) : (
-                /* GESTIÓN DE TURNOS */
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in text-left">
                     {Object.keys(data.turns).length > 0 ? Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
@@ -377,9 +369,6 @@ const Dashboard = ({ userEmail, onLogout }) => {
     );
 };
 
-/**
- * LOGIN SCREEN
- */
 const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
     const [selected, setSelected] = useState("");
@@ -417,16 +406,16 @@ const LoginScreen = ({ onLogin }) => {
                 <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-10 shadow-lg shadow-blue-500/20">
                     <Icon name="ShieldCheck" size={40} className="text-white" />
                 </div>
-                <h1 className="text-2xl font-black italic uppercase text-white mb-10">Meta Control</h1>
+                <h1 className="text-2xl font-black italic uppercase text-white mb-10 text-center">Meta Control</h1>
                 <form onSubmit={handleLogin} className="space-y-6 text-left">
                     <div className="space-y-2">
-                        <label className="text-[10px] font-black text-zinc-500 uppercase ml-2">Seleccionar Auditor</label>
+                        <label className="text-[10px] font-black text-zinc-500 uppercase ml-2 tracking-widest">Seleccionar Auditor</label>
                         <select className="w-full bg-black border border-white/10 rounded-2xl p-5 text-white outline-none appearance-none cursor-pointer" value={selected} onChange={e => setSelected(e.target.value)}>
                             {auditors.map(a => <option key={a} value={a}>{a}</option>)}
                         </select>
                     </div>
                     <div className="space-y-2">
-                        <label className="text-[10px] font-black text-zinc-500 uppercase ml-2">Contraseña</label>
+                        <label className="text-[10px] font-black text-zinc-500 uppercase ml-2 tracking-widest">Contraseña</label>
                         <input type="password" placeholder="••••••••" required className="w-full bg-black border border-white/10 rounded-2xl p-5 text-white outline-none focus:border-blue-600 transition-all" onChange={e => setPass(e.target.value)} />
                     </div>
                     <button className="w-full bg-blue-600 py-5 rounded-2xl font-black uppercase text-white shadow-xl hover:bg-blue-500 transition-all transform active:scale-[0.98]">
@@ -438,10 +427,11 @@ const LoginScreen = ({ onLogin }) => {
     );
 };
 
-// Componente Raíz
 function App() {
     const [session, setSession] = useState(localStorage.getItem('session_user'));
     return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
 }
 
-export default App;
+// Renderizado directo para Babel Standalone sin export default
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
