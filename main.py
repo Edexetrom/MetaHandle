@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- CONFIGURACIÓN DE BASE DE DATOS (SQLite Local) ---
+# --- CONFIGURACIÓN DE BASE DE DATOS (SQLite) ---
 DATABASE_URL = "sqlite:///./meta_control.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -76,10 +76,10 @@ def parse_days(days_str: str) -> List[int]:
         return [DAYS_MAP.get(d.strip(), 0) for d in days_str.split(",") if d.strip() in DAYS_MAP]
     except: return [0,1,2,3,4]
 
-# --- MOTOR DE AUTOMATIZACIÓN (SQLite Only) ---
+# --- MOTOR DE AUTOMATIZACIÓN ---
 async def automation_engine():
     while True:
-        await asyncio.sleep(120) 
+        await asyncio.sleep(120) # Cada 2 minutos
         db = SessionLocal()
         try:
             state = db.query(AutomationState).first()
@@ -88,7 +88,7 @@ async def automation_engine():
             mex_tz = pytz.timezone('America/Mexico_City')
             now = datetime.now(mex_tz)
             
-            # Reset diario (medianoche CDMX)
+            # Reset nocturno automático (00:00 CDMX)
             if now.hour == 0 and now.minute < 3:
                 db.query(AdSetSetting).update({"is_frozen": False})
                 db.commit()
@@ -105,18 +105,18 @@ async def automation_engine():
                     s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
                     if not s or s.is_frozen: continue
 
-                    # Lógica de Horario L-V (Simplificada para el motor)
                     curr_day = now.weekday()
-                    active_days = parse_days(s.turno)
-                    
-                    # Por ahora el motor asume horario laboral si está en el día correcto
-                    in_time = curr_day in active_days 
+                    if curr_day not in parse_days(s.turno):
+                        # Si no es día laboral, pausar si está activo
+                        if ad['status'] == 'ACTIVE':
+                            await client.post(f"{BASE_URL}/{ad['id']}", params={"status": "PAUSED", "access_token": ACCESS_TOKEN})
+                        continue
                     
                     spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0))
                     budget = float(ad.get("daily_budget", 0)) / 100
-                    over_limit = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
+                    over_budget = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
 
-                    should_be_active = in_time and not over_budget
+                    should_be_active = not over_budget
                     is_active = ad['status'] == 'ACTIVE'
 
                     if should_be_active and not is_active:
@@ -130,6 +130,26 @@ async def automation_engine():
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+def get_google_creds():
+    creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
+    if creds_b64:
+        creds_json = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
+        return service_account.Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+    # Fallback variables individuales
+    raw_key = os.environ.get("GOOGLE_PRIVATE_KEY", "").replace('\\n', '\n').strip('"').strip("'")
+    info = {
+        "type": "service_account",
+        "project_id": os.environ.get("GOOGLE_PROJECT_ID"),
+        "private_key_id": os.environ.get("PROJECT_PRIVATE_KEY_ID"),
+        "private_key": raw_key,
+        "client_email": os.environ.get("GOOGLE_CLIENT_EMAIL"),
+        "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "client_x509_cert_url": os.environ.get("GOOGLE_CLIENT_X509_CERT_URL")
+    }
+    return service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+
 @app.on_event("startup")
 async def startup():
     db = SessionLocal()
@@ -139,28 +159,27 @@ async def startup():
     db.close()
     asyncio.create_task(automation_engine())
 
-# --- ENDPOINTS DE CONTROL ---
-
 @app.get("/auth/auditors")
 async def get_auditors():
-    creds_b64 = os.environ.get("GOOGLE_CREDS_BASE64")
-    creds_dict = json.loads(base64.b64decode(creds_b64).decode('utf-8'))
-    creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'])
+    creds = get_google_creds()
     service = build('sheets', 'v4', credentials=creds)
     res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
     return {"auditors": [row[0] for row in res.get('values', [])[1:] if row]}
 
 @app.post("/auth/login")
 async def login(req: dict):
-    # Lógica de validación de Sheets... (abreviado)
-    return {"status": "success", "user": req['nombre']}
+    creds = get_google_creds()
+    service = build('sheets', 'v4', credentials=creds)
+    res = service.spreadsheets().values().get(spreadsheetId=SHEET_ID, range="Auditores!A:B").execute()
+    for row in res.get('values', [])[1:]:
+        if row[0] == req['nombre'] and row[1] == req['password']:
+            return {"status": "success", "user": row[0]}
+    raise HTTPException(401)
 
 @app.get("/ads/sync")
 async def full_sync():
-    """Retorna datos de Meta + Configuración de SQLite"""
     db = SessionLocal()
     try:
-        # 1. Meta
         async with httpx.AsyncClient() as client:
             res = await client.get(f"{BASE_URL}/{AD_ACCOUNT_ID}/adsets", params={
                 "fields": "id,name,status,daily_budget,insights.date_preset(today){spend,actions}",
@@ -168,22 +187,15 @@ async def full_sync():
             })
             meta = res.json().get("data", [])
         
-        # 2. SQLite Settings
-        settings = {s.id: {"limit_perc": s.limit_perc, "turno": s.turno, "is_frozen": s.is_frozen} 
-                    for s in db.query(AdSetSetting).all()}
-        
-        # 3. Automation State
+        settings = {s.id: {"limit_perc": s.limit_perc, "turno": s.turno, "is_frozen": s.is_frozen} for s in db.query(AdSetSetting).all()}
         auto = db.query(AutomationState).first()
+        logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(5).all()
         
-        # 4. Logs
-        logs = db.query(ActionLog).order_by(ActionLog.time.desc()).limit(5).all()
-        logs_list = [{"user": l.user, "msg": l.msg, "time": l.time.isoformat()} for l in logs]
-
         return {
             "meta": meta,
             "settings": settings,
             "automation_active": auto.is_active if auto else False,
-            "logs": logs_list
+            "logs": [{"user": l.user, "msg": l.msg, "time": l.time.strftime("%H:%M:%S")} for l in logs]
         }
     finally: db.close()
 
@@ -202,7 +214,22 @@ async def update_adset(req: dict):
         
         if 'log' in req:
             db.add(ActionLog(user=req['user'], msg=req['log']))
-            
+        db.commit()
+        return {"status": "ok"}
+    finally: db.close()
+
+@app.post("/ads/bulk-update")
+async def bulk_update(req: dict):
+    db = SessionLocal()
+    try:
+        for sid in req['ids']:
+            s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
+            if not s:
+                s = AdSetSetting(id=sid)
+                db.add(s)
+            s.limit_perc = float(req['limit_perc'])
+        
+        db.add(ActionLog(user=req['user'], msg=f"Aplicó límite masivo {req['limit_perc']}% a {len(req['ids'])} conjuntos"))
         db.commit()
         return {"status": "ok"}
     finally: db.close()
