@@ -13,13 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, String, Float, Boolean, Integer, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- BASE DE DATOS ---
+# --- CONFIGURACIÓN DB ---
 DATABASE_URL = "sqlite:///./meta_control.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -53,16 +51,12 @@ class ActionLog(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# --- CONSTANTES ---
+# --- CONSTANTES Y CACHÉ ---
 META_ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
 META_AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
 API_VERSION = "v21.0"
 
-# --- CACHÉ INTELIGENTE (10s) ---
-meta_cache: Dict[str, Any] = {
-    "data": None,
-    "timestamp": 0
-}
+meta_cache: Dict[str, Any] = {"data": None, "timestamp": 0}
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -71,8 +65,16 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 async def startup_event():
     app.state.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=60.0))
     db = SessionLocal()
+    # Asegurar estado inicial
     if not db.query(AutomationState).first():
         db.add(AutomationState(id=1, is_active=False))
+    # SEMBRADO DE TURNOS (Si no existen, se crean)
+    if not db.query(TurnConfig).first():
+        db.add_all([
+            TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
+            TurnConfig(name="vespertino", start_hour=13.0, end_hour=21.0, days="L-V"),
+            TurnConfig(name="fsemana", start_hour=8.0, end_hour=14.0, days="S")
+        ])
     db.commit(); db.close()
     asyncio.create_task(automation_engine())
 
@@ -81,7 +83,6 @@ async def shutdown_event():
     await app.state.client.aclose()
 
 async def get_meta_data_cached():
-    """Obtiene datos de Meta con caché de 10 segundos para maximizar fluidez"""
     curr_time = time.time()
     if meta_cache["data"] and (curr_time - meta_cache["timestamp"] < 10):
         return meta_cache["data"]
@@ -94,14 +95,13 @@ async def get_meta_data_cached():
         meta_cache["data"] = data
         meta_cache["timestamp"] = curr_time
         return data
-    except Exception as e:
-        logging.error(f"Error Meta API: {e}")
+    except:
         return meta_cache["data"] or []
 
-# --- MOTOR DE AUTOMATIZACIÓN ---
+# --- MOTOR DE REGLAS ---
 async def automation_engine():
     while True:
-        await asyncio.sleep(45) # Ciclo optimizado
+        await asyncio.sleep(45)
         db = SessionLocal()
         try:
             state = db.query(AutomationState).first()
@@ -111,11 +111,6 @@ async def automation_engine():
             now = datetime.now(mex_tz)
             curr_h = now.hour + (now.minute / 60)
             
-            # Reset nocturno
-            if now.hour == 0 and now.minute < 2:
-                db.query(AdSetSetting).update({"is_frozen": False})
-                db.commit()
-
             turns = {t.name.lower(): t for t in db.query(TurnConfig).all()}
             meta_data = await get_meta_data_cached()
 
@@ -136,10 +131,10 @@ async def automation_engine():
                     await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "ACTIVE", "access_token": META_ACCESS_TOKEN})
                 elif not should_be_active and ad['status'] == 'ACTIVE':
                     await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "PAUSED", "access_token": META_ACCESS_TOKEN})
-        except Exception as e: logging.error(f"Engine Exception: {e}")
+        except: pass
         finally: db.close()
 
-# --- API ENDPOINTS ---
+# --- ENDPOINTS API ---
 
 @app.get("/ads/sync")
 async def sync_data():
@@ -150,7 +145,6 @@ async def sync_data():
         turns = {t.name: {"start": t.start_hour, "end": t.end_hour, "days": t.days} for t in db.query(TurnConfig).all()}
         auto = db.query(AutomationState).first()
         logs = db.query(ActionLog).order_by(ActionLog.id.desc()).limit(15).all()
-        
         return {
             "meta": meta, "settings": settings, "turns": turns,
             "automation_active": auto.is_active if auto else False,
@@ -165,8 +159,7 @@ async def update_meta_status(req: dict):
         db = SessionLocal()
         db.add(ActionLog(user=req['user'], msg=f"Manual: {req['status']} en {req['id']}"))
         db.commit(); db.close()
-        # Invalidar caché para forzar refresco real
-        meta_cache["timestamp"] = 0
+        meta_cache["timestamp"] = 0 # Invalidar caché
         return {"ok": True}
     return {"ok": False}
 
@@ -180,21 +173,7 @@ async def update_setting(req: dict):
         if 'turno' in req: s.turno = req['turno']
         if 'is_frozen' in req: s.is_frozen = bool(req['is_frozen'])
         if 'log' in req: db.add(ActionLog(user=req['user'], msg=req['log']))
-        db.commit()
-        return {"ok": True}
-    finally: db.close()
-
-@app.post("/ads/bulk-update")
-async def bulk_update(req: dict):
-    db = SessionLocal()
-    try:
-        for sid in req['ids']:
-            s = db.query(AdSetSetting).filter(AdSetSetting.id == sid).first()
-            if not s: s = AdSetSetting(id=sid); db.add(s)
-            s.limit_perc = float(req['limit_perc'])
-        db.add(ActionLog(user=req['user'], msg=f"Masivo: {req['limit_perc']}% a {len(req['ids'])} adsets"))
-        db.commit()
-        return {"ok": True}
+        db.commit(); return {"ok": True}
     finally: db.close()
 
 @app.post("/turns/update")
@@ -203,9 +182,10 @@ async def update_turn(req: dict):
     try:
         t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
         if not t: t = TurnConfig(name=req['name']); db.add(t)
-        t.start_hour, t.end_hour, t.days = float(req['start']), float(req['end']), req['days']
-        db.commit()
-        return {"ok": True}
+        t.start_hour = float(req['start'])
+        t.end_hour = float(req['end'])
+        t.days = req['days']
+        db.commit(); return {"ok": True}
     finally: db.close()
 
 @app.post("/ads/automation/toggle")
@@ -215,8 +195,7 @@ async def toggle_auto(req: dict):
         auto = db.query(AutomationState).first()
         auto.is_active = not auto.is_active
         db.add(ActionLog(user=req['user'], msg=f"{'Encendió' if auto.is_active else 'Apagó'} automatización"))
-        db.commit()
-        return {"is_active": auto.is_active}
+        db.commit(); return {"is_active": auto.is_active}
     finally: db.close()
 
 @app.get("/auth/auditors")

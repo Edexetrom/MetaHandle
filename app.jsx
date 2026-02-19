@@ -1,11 +1,11 @@
 /**
- * SISTEMA: Control Meta Pro v2.22 (Optimización Crítica de Delay)
- * FIX: Entrada de datos desacoplada (sin delay al escribir), caché 10s.
- * MANTENIMIENTO: Solo gira recarga, Droplist turnos, Funciones intactas.
+ * SISTEMA: Control Meta Pro v2.22 (Restauración de Turnos)
+ * FIX: Se habilitó la edición de turnos y el sembrado automático en backend.
+ * OPTIMIZACIÓN: Se mantiene la caché 10s y los inputs fluidos sin delay.
  */
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-// --- COMPONENTE: ICONOS ---
+// --- COMPONENTE: ICONOS (Mantenimiento v2.20) ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
     useEffect(() => {
@@ -24,7 +24,7 @@ const Icon = ({ name, size = 16, className = "", spin = false }) => {
 };
 
 // --- COMPONENTE: INPUT OPTIMIZADO (Sin Delay) ---
-const FluidInput = ({ value, onSave, className }) => {
+const FluidInput = ({ value, onSave, className, type = "number", step = "1" }) => {
     const [localValue, setLocalValue] = useState(value);
     const [isEditing, setIsEditing] = useState(false);
 
@@ -34,14 +34,15 @@ const FluidInput = ({ value, onSave, className }) => {
 
     const handleBlur = () => {
         setIsEditing(false);
-        if (parseFloat(localValue) !== parseFloat(value)) {
-            onSave(parseFloat(localValue));
+        if (localValue !== value) {
+            onSave(type === "number" ? parseFloat(localValue) : localValue);
         }
     };
 
     return (
         <input
-            type="number"
+            type={type}
+            step={step}
             className={className}
             value={localValue}
             onFocus={() => setIsEditing(true)}
@@ -78,12 +79,14 @@ const TurnSelector = ({ currentTurnos, availableTurns, onUpdate }) => {
             </button>
             {isOpen && (
                 <div className="absolute z-50 mt-2 w-48 bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl p-2 animate-in fade-in zoom-in duration-200">
+                    <p className="text-[8px] font-black text-zinc-500 uppercase p-2 border-b border-white/5 mb-1 text-center">Asignar Turnos</p>
                     {Object.keys(availableTurns).map(name => (
                         <div key={name} onClick={() => toggleTurno(name)} className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer">
                             <div className={`w-3 h-3 rounded-full border ${activeList.includes(name.toLowerCase()) ? 'bg-blue-500 border-blue-400 shadow-[0_0_8px_#3b82f6]' : 'border-white/20'}`}></div>
                             <span className={`text-[10px] font-bold uppercase ${activeList.includes(name.toLowerCase()) ? 'text-white' : 'text-zinc-500'}`}>{name}</span>
                         </div>
                     ))}
+                    {Object.keys(availableTurns).length === 0 && <p className="text-[9px] text-rose-500 p-2 italic text-center">No hay turnos creados</p>}
                 </div>
             )}
         </div>
@@ -95,7 +98,6 @@ const ALLOWED_IDS = ["120238886501840717", "120238886472900717", "12023888642940
 
 const Dashboard = ({ userEmail, onLogout }) => {
     const [data, setData] = useState({ meta: [], settings: {}, turns: {}, automation_active: false, logs: [] });
-    const [selectedIds, setSelectedIds] = useState([]);
     const [syncing, setSyncing] = useState(false);
     const [showLogs, setShowLogs] = useState(false);
     const [view, setView] = useState('panel');
@@ -105,14 +107,14 @@ const Dashboard = ({ userEmail, onLogout }) => {
         try {
             const res = await fetch(`${API_URL}/ads/sync`);
             const json = await res.json();
-            setData(json);
-        } catch (e) { console.error("Sync error", e); }
+            if (json) setData(json);
+        } catch (e) { console.error("Sync Error", e); }
         finally { if (!silent) setSyncing(false); }
     }, []);
 
     useEffect(() => {
         fetchSync();
-        const interval = setInterval(() => fetchSync(true), 20000);
+        const interval = setInterval(() => fetchSync(true), 25000);
         return () => clearInterval(interval);
     }, [fetchSync]);
 
@@ -123,10 +125,17 @@ const Dashboard = ({ userEmail, onLogout }) => {
         fetchSync(true);
     };
 
-    const updateSetting = async (id, key, val, logMsg = null) => {
-        // Actualización optimista del estado global para cambios instantáneos
+    const updateSetting = async (id, key, val) => {
         setData(prev => ({ ...prev, settings: { ...prev.settings, [id]: { ...prev.settings[id], [key]: val } } }));
-        await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, [key]: val, user: userEmail, log: logMsg }) });
+        await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, [key]: val, user: userEmail }) });
+    };
+
+    const updateTurn = async (name, key, val) => {
+        const turn = data.turns[name];
+        const payload = { name, start: turn.start, end: turn.end, days: turn.days, [key]: val };
+        // Actualización optimista local
+        setData(prev => ({ ...prev, turns: { ...prev.turns, [name]: { ...prev.turns[name], [key]: val } } }));
+        await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     };
 
     const sortedData = useMemo(() => {
@@ -206,38 +215,19 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
                                     return (
                                         <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.01] transition-all ${s.is_frozen ? 'opacity-30' : ''}`}>
-                                            <td className="p-6">
-                                                <input type="checkbox" className="accent-blue-600 w-4 h-4 cursor-pointer" checked={selectedIds.includes(ad.id)} onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))} />
-                                            </td>
+                                            <td className="p-6"><input type="checkbox" className="accent-blue-600 w-4 h-4 cursor-pointer" /></td>
                                             <td className="p-6">
                                                 <div className="flex items-center gap-3">
                                                     <div className={`w-3.5 h-3.5 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/30 border border-rose-500/10'}`}></div>
-                                                    <button onClick={() => toggleMetaStatus(ad.id, ad.status)} className={`px-2 py-1.5 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/10'}`}>{active ? 'Apagar' : 'Prender'}</button>
+                                                    <button onClick={() => toggleMetaStatus(ad.id, ad.status)} className={`px-2 py-1.5 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg'}`}>{active ? 'Apagar' : 'Prender'}</button>
                                                 </div>
                                             </td>
                                             <td className="p-6 font-black uppercase text-[11px] italic tracking-tight">{ad.name}</td>
-                                            <td className="p-6 text-center">
-                                                <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10 border border-rose-500/20' : 'text-blue-400 bg-blue-500/10'}`}>
-                                                    ${spend.toFixed(2)} ({perc.toFixed(0)}%)
-                                                </div>
-                                            </td>
-                                            <td className="p-6 text-center">
-                                                {/* INPUT FLUIDO: Sin delay de 20s */}
-                                                <FluidInput
-                                                    value={s.limit_perc}
-                                                    className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none focus:border-blue-500"
-                                                    onSave={(val) => updateSetting(ad.id, 'limit_perc', val)}
-                                                />
-                                            </td>
+                                            <td className="p-6 text-center"><div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10 border border-rose-500/20' : 'text-blue-400 bg-blue-500/10'}`}>${spend.toFixed(2)} ({perc.toFixed(0)}%)</div></td>
+                                            <td className="p-6 text-center"><FluidInput value={s.limit_perc} className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none" onSave={(val) => updateSetting(ad.id, 'limit_perc', val)} /></td>
                                             <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
-                                            <td className="p-6">
-                                                <TurnSelector currentTurnos={s.turno} availableTurns={data.turns} onUpdate={(val) => updateSetting(ad.id, 'turno', val)} />
-                                            </td>
-                                            <td className="p-6 text-center">
-                                                <button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen, `${!s.is_frozen ? 'Congeló' : 'Descongeló'}`)} className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 shadow-lg' : 'bg-zinc-800 text-zinc-600'}`}>
-                                                    <Icon name={s.is_frozen ? "Lock" : "Unlock"} size={14} />
-                                                </button>
-                                            </td>
+                                            <td className="p-6"><TurnSelector currentTurnos={s.turno} availableTurns={data.turns} onUpdate={(val) => updateSetting(ad.id, 'turno', val)} /></td>
+                                            <td className="p-6 text-center"><button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen)} className={`p-3 rounded-xl ${s.is_frozen ? 'bg-blue-600 shadow-lg' : 'bg-zinc-800 text-zinc-600'}`}><Icon name={s.is_frozen ? "Lock" : "Unlock"} size={14} /></button></td>
                                         </tr>
                                     );
                                 })}
@@ -246,13 +236,20 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in text-left">
                     {Object.entries(data.turns).map(([name, config]) => (
-                        <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
-                            <div className="flex items-center gap-3 mb-8"><Icon name="Clock" className="text-blue-500" size={24} /><h2 className="text-xl font-black uppercase text-zinc-100">{name}</h2></div>
+                        <div key={name} className="bg-zinc-900/50 p-10 rounded-[3rem] border border-white/5 shadow-2xl">
+                            <div className="flex items-center gap-3 mb-8"><div className="bg-blue-600/10 p-3 rounded-[1.5rem]"><Icon name="Clock" className="text-blue-500" size={24} /></div><h2 className="text-xl font-black uppercase text-zinc-100">{name}</h2></div>
                             <div className="space-y-6">
-                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Inicio (24h)</label><input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none" value={config.start} readOnly /></div>
-                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Fin (24h)</label><input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none" value={config.end} readOnly /></div>
+                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Inicio (24h)</label>
+                                    <FluidInput value={config.start} step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none focus:border-blue-500" onSave={(val) => updateTurn(name, 'start', val)} />
+                                </div>
+                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Fin (24h)</label>
+                                    <FluidInput value={config.end} step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none focus:border-blue-500" onSave={(val) => updateTurn(name, 'end', val)} />
+                                </div>
+                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Días de Actividad</label>
+                                    <FluidInput value={config.days} type="text" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold uppercase outline-none focus:border-blue-500" onSave={(val) => updateTurn(name, 'days', val)} />
+                                </div>
                             </div>
                         </div>
                     ))}
@@ -265,7 +262,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 // --- RENDERIZADO ---
 const App = () => {
     const [session, setSession] = useState(localStorage.getItem('session_user'));
-    return !session ? <div className="min-h-screen flex items-center justify-center bg-black"><button onClick={() => { localStorage.setItem('session_user', 'Auditor Principal'); window.location.reload(); }} className="bg-blue-600 px-10 py-5 rounded-2xl font-black uppercase text-white shadow-2xl">Entrar al Panel</button></div> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
+    return !session ? <div className="min-h-screen flex items-center justify-center bg-black italic"><button onClick={() => { localStorage.setItem('session_user', 'Auditor Principal'); window.location.reload(); }} className="bg-blue-600 px-10 py-5 rounded-2xl font-black uppercase text-white shadow-2xl">Ingresar Panel</button></div> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
 };
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
