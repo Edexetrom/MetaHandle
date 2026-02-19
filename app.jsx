@@ -1,6 +1,9 @@
 /**
- * SISTEMA: Control Meta Pro v4.7
- * CAMBIO: Implementación de handleBulk y optimización de sincronización real-time.
+ * SISTEMA: Control Meta Pro v4.8
+ * CAMBIOS: 
+ * 1. Corregida sintaxis .exists() a .exists (propiedad).
+ * 2. Implementada Regla 3: Autenticación completa antes de listeners.
+ * 3. Añadidos callbacks de error en onSnapshot para depuración.
  */
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -26,14 +29,19 @@ const getApiUrl = () => {
 
 const API_URL = getApiUrl();
 
-// --- FIREBASE INIT (Compat Mode) ---
-const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
+// --- FIREBASE INIT ---
+// Usamos las variables globales proporcionadas por el entorno
+const firebaseConfig = typeof __firebase_config !== 'undefined'
+    ? JSON.parse(__firebase_config)
+    : JSON.parse(window.__firebase_config || '{}');
+
 if (!firebase.apps.length) {
     firebase.initializeApp(firebaseConfig);
 }
+
 const db = firebase.firestore();
 const auth = firebase.auth();
-const appId = window.__app_id || 'control-meta-pro-v4';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'control-meta-pro-v4';
 
 const ALLOWED_IDS = [
     "120238886501840717", "120238886472900717", "120238886429400717",
@@ -63,7 +71,7 @@ const LoginScreen = ({ onLogin }) => {
             })
             .catch(e => {
                 console.error("Error API:", e);
-                setError("Error al conectar con manejoapi.libresdeumas.com");
+                setError("Error al conectar con la API de Auditores");
             });
     }, []);
 
@@ -87,19 +95,23 @@ const LoginScreen = ({ onLogin }) => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-6 bg-black">
+        <div className="min-h-screen flex items-center justify-center p-6 bg-black font-sans">
             <div className="w-full max-w-md bg-zinc-900 border border-white/5 p-12 rounded-[3rem] shadow-2xl text-center">
                 <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8">
                     <Icon name="shield-check" size={40} className="text-white" />
                 </div>
-                <h2 className="text-3xl font-black italic uppercase text-white mb-10">Control Meta</h2>
-                {error && <p className="text-rose-500 text-[10px] mb-4 uppercase font-bold">{error}</p>}
-                <form onSubmit={handleLogin} className="space-y-6">
-                    <select className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none" value={selected} onChange={e => setSelected(e.target.value)}>
+                <h2 className="text-3xl font-black italic uppercase text-white mb-10 tracking-tighter">Control Meta</h2>
+                {error && <p className="text-rose-500 text-[10px] mb-4 uppercase font-bold tracking-widest">{error}</p>}
+                <form onSubmit={handleLogin} className="space-y-6 text-left">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase ml-4 tracking-widest">Seleccionar Auditor</label>
+                    <select className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none appearance-none cursor-pointer" value={selected} onChange={e => setSelected(e.target.value)}>
                         {auditors.map(a => <option key={a} value={a}>{a}</option>)}
                     </select>
-                    <input type="password" placeholder="Contraseña" required className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none" onChange={e => setPass(e.target.value)} />
-                    <button className="w-full bg-blue-600 py-5 rounded-2xl font-black uppercase text-white shadow-xl">{loading ? "Validando..." : "Ingresar"}</button>
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase ml-4 tracking-widest">Contraseña</label>
+                    <input type="password" placeholder="••••••••" required className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none focus:border-blue-500 transition-all" onChange={e => setPass(e.target.value)} />
+                    <button className="w-full bg-blue-600 py-5 rounded-2xl font-black uppercase text-white shadow-xl hover:bg-blue-500 transition-all">
+                        {loading ? "Validando..." : "Ingresar"}
+                    </button>
                 </form>
             </div>
         </div>
@@ -117,61 +129,94 @@ const Dashboard = ({ userEmail, onLogout }) => {
     const [selectedIds, setSelectedIds] = useState([]);
     const [bulkLimit, setBulkLimit] = useState("");
     const [loading, setLoading] = useState(true);
+    const [user, setUser] = useState(null);
 
+    // EFECTO 1: Autenticación (Regla 3)
     useEffect(() => {
-        auth.signInAnonymously();
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await auth.signInWithCustomToken(__initial_auth_token);
+                } else {
+                    await auth.signInAnonymously();
+                }
+            } catch (err) {
+                console.error("Auth Error:", err);
+            }
+        };
+        initAuth();
+        const unsubscribe = auth.onAuthStateChanged(u => setUser(u));
+        return () => unsubscribe();
+    }, []);
 
-        // Listeners Real-time entre auditores
+    // EFECTO 2: Listeners Firestore (Solo si hay usuario)
+    useEffect(() => {
+        if (!user) return;
+
+        // Listener Estado Automatización
         const unsubAuto = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('automation').doc('state')
-            .onSnapshot(d => d.exists() && setAutoState(d.data().is_active));
+            .onSnapshot(
+                d => { if (d.exists) setAutoState(d.data().is_active); },
+                e => console.error("Auto Snapshot Error:", e)
+            );
 
+        // Listener Configuración AdSets
         const unsubSettings = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets')
-            .onSnapshot(s => {
-                const d = {}; s.forEach(doc => d[doc.id] = doc.data()); setSettings(d);
-            });
+            .onSnapshot(
+                s => {
+                    const d = {}; s.forEach(doc => d[doc.id] = doc.data());
+                    setSettings(d);
+                },
+                e => console.error("Settings Snapshot Error:", e)
+            );
 
+        // Listener Logs
         const unsubLogs = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('logs')
             .orderBy('time', 'desc').limit(3)
-            .onSnapshot(s => {
-                const l = []; s.forEach(doc => l.push(doc.data())); setLogs(l);
-            });
+            .onSnapshot(
+                s => {
+                    const l = []; s.forEach(doc => l.push(doc.data()));
+                    setLogs(l);
+                },
+                e => console.error("Logs Snapshot Error:", e)
+            );
 
         const syncMeta = () => fetch(`${API_URL}/ads/sync`).then(r => r.json()).then(d => {
             setMetaData(d.data || []);
             setLoading(false);
-        });
+        }).catch(e => console.error("Sync Meta Error:", e));
 
         syncMeta();
-        const interval = setInterval(syncMeta, 60000);
+        const interval = setInterval(syncMeta, 120000);
 
         return () => { unsubAuto(); unsubSettings(); unsubLogs(); clearInterval(interval); };
-    }, []);
+    }, [user]);
 
     const logAction = async (msg) => {
+        if (!user) return;
         await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('logs').add({
             user: userEmail, msg, time: Date.now()
         });
     };
 
     const updateSetting = async (id, key, val) => {
+        if (!user) return;
         await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets').doc(id).set({ [key]: val }, { merge: true });
     };
 
-    // Función de Acción Grupal corregida
     const handleBulk = async () => {
-        if (!bulkLimit || !selectedIds.length) return;
+        if (!bulkLimit || !selectedIds.length || !user) return;
         const limitVal = parseFloat(bulkLimit);
-
         for (const id of selectedIds) {
             await updateSetting(id, 'limit_perc', limitVal);
         }
-
         logAction(`Aplicó límite masivo de ${limitVal}% a ${selectedIds.length} conjuntos`);
         setBulkLimit("");
         setSelectedIds([]);
     };
 
     const handleResetFrozen = async () => {
+        if (!user) return;
         const batch = db.batch();
         const snap = await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets').get();
         snap.forEach(doc => batch.update(doc.ref, { is_frozen: false }));
@@ -190,7 +235,10 @@ const Dashboard = ({ userEmail, onLogout }) => {
         if (ad.status === 'ACTIVE') acc.a++; return acc;
     }, { s: 0, r: 0, a: 0 }), [sortedData]);
 
-    if (loading) return <div className="min-h-screen bg-black flex items-center justify-center font-black text-blue-500 uppercase tracking-widest animate-pulse text-xl">Iniciando Sistema...</div>;
+    if (loading) return <div className="min-h-screen bg-black flex flex-col items-center justify-center font-black text-blue-500 uppercase tracking-widest animate-pulse text-xl">
+        <Icon name="refresh-cw" className="animate-spin mb-4" size={32} />
+        Sincronizando Sistema...
+    </div>;
 
     return (
         <div className="min-h-screen bg-black text-white p-6 lg:p-12 animate-fade-in font-sans">
@@ -219,7 +267,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     <p className="text-2xl font-black italic">{stats.r}</p>
                 </div>
                 <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5 flex items-center justify-between">
-                    <div className="truncate"><p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Auditor</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
+                    <div className="truncate"><p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Auditor Conectado</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
                     <button onClick={onLogout} className="text-rose-500 hover:opacity-70 transition-all"><Icon name="log-out" size={20} /></button>
                 </div>
             </header>
