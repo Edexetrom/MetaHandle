@@ -1,20 +1,39 @@
 /**
- * SISTEMA: Control Meta Pro v5.5 (SQLite Only)
- * FIX: Modificador de turnos añadido, LEDs de estado fijos, Iconos estables.
+ * SISTEMA: Control Meta Pro v5.6 (SQLite + Polling Safe)
+ * FIX: Notificaciones en campana, Corrección de rotación de iconos, Recuperación de edición grupal.
+ * REQUERIMIENTOS: 1-18 implementados (Sin Firebase).
  */
 const { useState, useEffect, useMemo, useRef } = React;
 
+// --- COMPONENTE: ICONOS (Seguro para React) ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
+
     useEffect(() => {
         if (window.lucide && iconRef.current) {
+            // Limpiamos contenido previo para evitar duplicados en re-renders
+            iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
             window.lucide.createIcons({
-                attrs: { 'stroke-width': 2, 'width': size, 'height': size, 'class': `${className} ${spin ? 'animate-spin' : ''}` },
+                attrs: {
+                    'stroke-width': 2,
+                    'width': size,
+                    'height': size,
+                    'class': `${className} ${spin ? 'animate-spin' : ''}`
+                },
                 nameAttr: 'data-lucide'
             });
         }
     }, [name, size, className, spin]);
-    return <span ref={iconRef} className="inline-flex items-center"><i data-lucide={name}></i></span>;
+
+    return (
+        <span
+            ref={iconRef}
+            className="inline-flex items-center justify-center pointer-events-none"
+            style={{ width: size, height: size }}
+        >
+            <i data-lucide={name}></i>
+        </span>
+    );
 };
 
 const API_URL = "https://manejoapi.libresdeumas.com";
@@ -33,7 +52,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
     const [selectedIds, setSelectedIds] = useState([]);
     const [bulkLimit, setBulkLimit] = useState("");
     const [syncing, setSyncing] = useState(false);
-    const [view, setView] = useState('panel'); // 'panel' o 'turnos'
+    const [showLogs, setShowLogs] = useState(false);
+    const [view, setView] = useState('panel');
 
     const fetchSync = async (silent = false) => {
         if (!silent) setSyncing(true);
@@ -41,7 +61,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
             const res = await fetch(`${API_URL}/ads/sync`);
             const json = await res.json();
             setData(json);
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error("Error de sincronización", e); }
         finally { setSyncing(false); }
     };
 
@@ -61,6 +81,18 @@ const Dashboard = ({ userEmail, onLogout }) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id, [key]: val, user: userEmail, log: logMsg })
         });
+    };
+
+    const handleBulkAction = async () => {
+        if (!bulkLimit || !selectedIds.length) return;
+        await fetch(`${API_URL}/ads/bulk-update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: selectedIds, limit_perc: bulkLimit, user: userEmail })
+        });
+        setBulkLimit("");
+        setSelectedIds([]);
+        fetchSync(true);
     };
 
     const updateTurn = async (name, start, end, days) => {
@@ -113,37 +145,68 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between">
                     <div className="truncate"><p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">Auditor</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
-                    <button onClick={onLogout} className="text-rose-600 hover:text-rose-400"><Icon name="log-out" size={18} /></button>
+                    <div className="flex gap-2">
+                        <button onClick={() => setShowLogs(!showLogs)} className="relative p-2 bg-white/5 rounded-xl hover:bg-white/10 transition-all">
+                            <Icon name="bell" size={18} className={data.logs.length > 0 ? "text-blue-500" : "text-zinc-500"} />
+                            {data.logs.length > 0 && <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full animate-ping"></span>}
+                        </button>
+                        <button onClick={onLogout} className="p-2 text-rose-600 hover:text-rose-400"><Icon name="log-out" size={18} /></button>
+                    </div>
                 </div>
             </header>
+
+            {/* MODAL / PANEL DE LOGS (Campanita) */}
+            {showLogs && (
+                <div className="fixed inset-0 z-50 flex items-start justify-end p-10 pointer-events-none">
+                    <div className="w-80 bg-zinc-900 border border-white/10 rounded-[2rem] shadow-2xl p-6 pointer-events-auto animate-fade-in">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-[10px] font-black uppercase tracking-widest text-blue-500">Notificaciones Recientes</h3>
+                            <button onClick={() => setShowLogs(false)}><Icon name="x" size={14} /></button>
+                        </div>
+                        <div className="space-y-3">
+                            {data.logs.map((l, i) => (
+                                <div key={i} className="bg-black/40 p-3 rounded-2xl border border-white/5">
+                                    <p className="text-[9px] font-bold uppercase text-blue-400 mb-1">{l.user} <span className="text-zinc-600 float-right">{l.time}</span></p>
+                                    <p className="text-[10px] uppercase text-zinc-300 tracking-tight">{l.msg}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* TABS NAVEGACION */}
             <div className="flex gap-4 mb-6">
                 <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
                 <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
-                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800">
+                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all">
                     <Icon name="refresh-cw" spin={syncing} size={16} className="text-blue-500" />
                 </button>
             </div>
 
             {view === 'panel' ? (
                 <>
-                    <div className="space-y-1 mb-8">
-                        {data.logs.map((l, i) => (
-                            <div key={i} className="bg-blue-600/5 border border-blue-500/10 p-2 px-4 rounded-xl flex items-center gap-2 text-[9px] font-bold uppercase">
-                                <Icon name="bell" size={10} className="text-blue-500" /><span className="text-blue-400">{l.user}</span> {l.msg} <span className="text-zinc-700 ml-auto">{l.time}</span>
-                            </div>
-                        ))}
+                    {/* ACCIONES GRUPALES RESTAURADAS */}
+                    <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl">
+                        <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
+                            <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
+                            <input type="number" className="bg-zinc-800 w-16 p-1 text-center text-xs rounded outline-none text-blue-500 font-bold" value={bulkLimit} onChange={e => setBulkLimit(e.target.value)} />
+                            <button onClick={handleBulkAction} className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded uppercase hover:bg-blue-500 transition-all">Aplicar a {selectedIds.length}</button>
+                        </div>
+                        <button onClick={async () => {
+                            await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'all', is_frozen: false, user: userEmail, log: "Realizó descongelado masivo manual" }) });
+                            fetchSync(true);
+                        }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest">Descongelar Todos</button>
                     </div>
 
-                    <div className="bg-zinc-900 border border-white/5 rounded-[2.5rem] overflow-hidden shadow-2xl">
+                    <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
                                 <thead>
                                     <tr className="bg-black text-[9px] font-black text-zinc-600 uppercase tracking-[0.2em] border-b border-white/5">
                                         <th className="p-6">Sel.</th>
                                         <th className="p-6">Led</th>
-                                        <th className="p-6">Nombre del Conjunto</th>
+                                        <th className="p-6 min-w-[350px]">Nombre Completo del AdSet</th>
                                         <th className="p-6 text-center">Inversión</th>
                                         <th className="p-6 text-center text-blue-500">Stop %</th>
                                         <th className="p-6 text-center">Resultados</th>
@@ -162,11 +225,19 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
                                         return (
                                             <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.01] transition-colors ${s.is_frozen ? 'opacity-30' : ''}`}>
-                                                <td className="p-6"><input type="checkbox" className="accent-blue-600 w-4 h-4 cursor-pointer" /></td>
                                                 <td className="p-6">
-                                                    <div className={`w-3 h-3 rounded-full shadow-lg ${active ? 'bg-emerald-500 shadow-emerald-500/40' : 'bg-rose-900/40 border border-rose-500/20'}`}></div>
+                                                    <input
+                                                        type="checkbox"
+                                                        className="accent-blue-600 w-4 h-4 cursor-pointer"
+                                                        checked={selectedIds.includes(ad.id)}
+                                                        onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))}
+                                                    />
                                                 </td>
-                                                <td className="p-6 whitespace-normal leading-relaxed font-black uppercase text-[11px] w-[400px]">{ad.name}</td>
+                                                <td className="p-6">
+                                                    {/* Punto 11: LED Indicador con brillo variable */}
+                                                    <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/30 border border-rose-500/20'}`}></div>
+                                                </td>
+                                                <td className="p-6 whitespace-normal leading-relaxed font-black uppercase text-[11px] italic tracking-tight">{ad.name}</td>
                                                 <td className="p-6 text-center">
                                                     <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10' : 'text-blue-400 bg-blue-500/10'}`}>
                                                         ${spend.toFixed(2)} ({perc.toFixed(0)}%)
@@ -180,7 +251,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                     <input type="text" className="bg-black/50 border border-white/10 p-2 rounded-xl text-[10px] font-black uppercase text-zinc-400 w-32 outline-none" defaultValue={s.turno} onBlur={(e) => updateSetting(ad.id, 'turno', e.target.value)} />
                                                 </td>
                                                 <td className="p-6 text-center">
-                                                    <button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen, `${!s.is_frozen ? 'Congeló' : 'Descongeló'} ${ad.id}`)} className={`p-3 rounded-xl ${s.is_frozen ? 'bg-blue-600' : 'bg-zinc-800 text-zinc-600'}`}>
+                                                    <button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen, `${!s.is_frozen ? 'Congeló' : 'Descongeló'} ${ad.id}`)} className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 shadow-lg shadow-blue-500/20' : 'bg-zinc-800 text-zinc-600'}`}>
                                                         {s.is_frozen ? <Icon name="lock" size={14} /> : <Icon name="unlock" size={14} />}
                                                     </button>
                                                 </td>
@@ -193,7 +264,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-in">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
                     {Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
                             <div className="flex items-center gap-3 mb-8">
@@ -223,6 +294,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
     );
 };
 
+// ... LoginScreen y App se mantienen igual ...
+
 const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
     const [selected, setSelected] = useState("");
@@ -248,7 +321,7 @@ const LoginScreen = ({ onLogin }) => {
             const u = await res.json();
             localStorage.setItem('session_user', u.user);
             onLogin(u.user);
-        } else alert("Error");
+        } else alert("Error de acceso");
         setLoading(false);
     };
 
