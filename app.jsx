@@ -1,7 +1,6 @@
 /**
- * SISTEMA: Control Meta Pro v5.6 (SQLite + Polling Safe)
- * FIX: Notificaciones en campana, Corrección de rotación de iconos, Recuperación de edición grupal.
- * REQUERIMIENTOS: 1-18 implementados (Sin Firebase).
+ * SISTEMA: Control Meta Pro v5.7 (SQLite Only)
+ * FIX: Tiempo de espera ampliado, Edición Grupal, Notificaciones Campanita, LEDs mejorados.
  */
 const { useState, useEffect, useMemo, useRef } = React;
 
@@ -11,7 +10,7 @@ const Icon = ({ name, size = 16, className = "", spin = false }) => {
 
     useEffect(() => {
         if (window.lucide && iconRef.current) {
-            // Limpiamos contenido previo para evitar duplicados en re-renders
+            // Usamos innerHTML para evitar conflictos con React Reconciliation y Lucide
             iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
             window.lucide.createIcons({
                 attrs: {
@@ -26,11 +25,7 @@ const Icon = ({ name, size = 16, className = "", spin = false }) => {
     }, [name, size, className, spin]);
 
     return (
-        <span
-            ref={iconRef}
-            className="inline-flex items-center justify-center pointer-events-none"
-            style={{ width: size, height: size }}
-        >
+        <span ref={iconRef} className="inline-flex items-center justify-center pointer-events-none" style={{ width: size, height: size }}>
             <i data-lucide={name}></i>
         </span>
     );
@@ -62,7 +57,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
             const json = await res.json();
             setData(json);
         } catch (e) { console.error("Error de sincronización", e); }
-        finally { setSyncing(false); }
+        finally { if (!silent) setSyncing(false); }
     };
 
     useEffect(() => {
@@ -85,6 +80,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
     const handleBulkAction = async () => {
         if (!bulkLimit || !selectedIds.length) return;
+        setSyncing(true);
         await fetch(`${API_URL}/ads/bulk-update`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -92,7 +88,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
         });
         setBulkLimit("");
         setSelectedIds([]);
-        fetchSync(true);
+        await fetchSync(true);
+        setSyncing(false);
     };
 
     const updateTurn = async (name, start, end, days) => {
@@ -120,7 +117,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
             {/* HEADER SUMMARY */}
             <header className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between shadow-xl">
+                <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 flex items-center justify-between shadow-xl">
                     <div><p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Automatización</p><p className="text-xl font-black uppercase">{data.automation_active ? 'Activa' : 'Apagada'}</p></div>
                     <button
                         onClick={async () => {
@@ -135,15 +132,15 @@ const Dashboard = ({ userEmail, onLogout }) => {
                         <div className={`w-5 h-5 bg-white rounded-full transition-all ${data.automation_active ? 'translate-x-7' : ''}`} />
                     </button>
                 </div>
-                <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5">
+                <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5">
                     <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Gasto Hoy / Activos</p>
                     <p className="text-2xl font-black uppercase tracking-tighter">${stats.s.toFixed(2)} / {stats.a}</p>
                 </div>
-                <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5">
+                <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5">
                     <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Resultados Totales</p>
                     <p className="text-2xl font-black uppercase tracking-tighter">{stats.r}</p>
                 </div>
-                <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between">
+                <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 flex items-center justify-between">
                     <div className="truncate"><p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">Auditor</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
                     <div className="flex gap-2">
                         <button onClick={() => setShowLogs(!showLogs)} className="relative p-2 bg-white/5 rounded-xl hover:bg-white/10 transition-all">
@@ -155,19 +152,19 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             </header>
 
-            {/* MODAL / PANEL DE LOGS (Campanita) */}
+            {/* NOTIFICACIONES */}
             {showLogs && (
                 <div className="fixed inset-0 z-50 flex items-start justify-end p-10 pointer-events-none">
                     <div className="w-80 bg-zinc-900 border border-white/10 rounded-[2rem] shadow-2xl p-6 pointer-events-auto animate-fade-in">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-[10px] font-black uppercase tracking-widest text-blue-500">Notificaciones Recientes</h3>
+                        <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
+                            <h3 className="text-[10px] font-black uppercase tracking-widest text-blue-500">Actividad Reciente</h3>
                             <button onClick={() => setShowLogs(false)}><Icon name="x" size={14} /></button>
                         </div>
-                        <div className="space-y-3">
+                        <div className="space-y-3 max-h-[400px] overflow-y-auto">
                             {data.logs.map((l, i) => (
                                 <div key={i} className="bg-black/40 p-3 rounded-2xl border border-white/5">
                                     <p className="text-[9px] font-bold uppercase text-blue-400 mb-1">{l.user} <span className="text-zinc-600 float-right">{l.time}</span></p>
-                                    <p className="text-[10px] uppercase text-zinc-300 tracking-tight">{l.msg}</p>
+                                    <p className="text-[10px] uppercase text-zinc-300 tracking-tight leading-tight">{l.msg}</p>
                                 </div>
                             ))}
                         </div>
@@ -175,21 +172,21 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             )}
 
-            {/* TABS NAVEGACION */}
+            {/* TABS */}
             <div className="flex gap-4 mb-6">
                 <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
                 <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
-                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all">
+                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all shadow-lg border border-white/5">
                     <Icon name="refresh-cw" spin={syncing} size={16} className="text-blue-500" />
                 </button>
             </div>
 
             {view === 'panel' ? (
                 <>
-                    {/* ACCIONES GRUPALES RESTAURADAS */}
+                    {/* EDICION GRUPAL RE-IMPLEMENTADA */}
                     <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
-                            <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
+                            <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Grupal:</span>
                             <input type="number" className="bg-zinc-800 w-16 p-1 text-center text-xs rounded outline-none text-blue-500 font-bold" value={bulkLimit} onChange={e => setBulkLimit(e.target.value)} />
                             <button onClick={handleBulkAction} className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded uppercase hover:bg-blue-500 transition-all">Aplicar a {selectedIds.length}</button>
                         </div>
@@ -234,8 +231,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                     />
                                                 </td>
                                                 <td className="p-6">
-                                                    {/* Punto 11: LED Indicador con brillo variable */}
-                                                    <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/30 border border-rose-500/20'}`}></div>
+                                                    {/* LED MEJORADO (Punto 11) */}
+                                                    <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/30 border border-rose-500/10'}`}></div>
                                                 </td>
                                                 <td className="p-6 whitespace-normal leading-relaxed font-black uppercase text-[11px] italic tracking-tight">{ad.name}</td>
                                                 <td className="p-6 text-center">
@@ -265,7 +262,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
-                    {Object.entries(data.turns).map(([name, config]) => (
+                    {Object.keys(data.turns).length > 0 ? Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
                             <div className="flex items-center gap-3 mb-8">
                                 <div className="bg-blue-600/10 p-3 rounded-2xl"><Icon name="clock" className="text-blue-500" size={20} /></div>
@@ -285,9 +282,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                     <input type="text" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold uppercase" value={config.days} onChange={e => updateTurn(name, config.start, config.end, e.target.value)} />
                                 </div>
                             </div>
-                            <p className="mt-6 text-[9px] text-zinc-600 uppercase font-bold tracking-widest leading-relaxed">Nota: Usa .5 para media hora. Ej: 20.5 es las 8:30 PM. Días: L-V o L,M,V.</p>
                         </div>
-                    ))}
+                    )) : <p className="text-zinc-500 uppercase font-black">No hay turnos configurados aún.</p>}
                 </div>
             )}
         </div>
@@ -295,7 +291,6 @@ const Dashboard = ({ userEmail, onLogout }) => {
 };
 
 // ... LoginScreen y App se mantienen igual ...
-
 const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
     const [selected, setSelected] = useState("");
