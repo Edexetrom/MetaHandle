@@ -3,23 +3,29 @@
  * AJUSTES: 
  * 1. Iconos estáticos (solo gira el de recarga).
  * 2. Selector de turnos multi-select (droplist).
+ * 3. Scope de Lucide corregido para evitar rotación global.
  */
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-// --- COMPONENTE: ICONOS (Manejo de Animación Única) ---
+// --- COMPONENTE: ICONOS (Manejo de Animación Única con Scope) ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
 
     useEffect(() => {
         if (window.lucide && iconRef.current) {
+            // Inyectamos el elemento i para Lucide
             iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
+            // Ejecutamos createIcons limitando el scope al elemento actual (root)
+            // Esto evita que el atributo 'spin' afecte a otros iconos en la página
             window.lucide.createIcons({
                 attrs: {
                     'stroke-width': 2,
                     'width': size,
                     'height': size,
                     'class': `${className} ${spin ? 'animate-spin' : ''}`.trim()
-                }
+                },
+                nameAttr: 'data-lucide',
+                root: iconRef.current
             });
         }
     }, [name, size, className, spin]);
@@ -321,7 +327,6 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                 </td>
                                                 <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
                                                 <td className="p-6">
-                                                    {/* AJUSTE: Selector de turnos multi-select */}
                                                     <TurnSelector
                                                         currentTurnos={s.turno}
                                                         availableTurns={data.turns}
@@ -408,7 +413,7 @@ const LoginScreen = ({ onLogin }) => {
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-black p-4 italic tracking-tight font-sans">
-            <div className="w-full max-w-sm bg-zinc-900 p-12 rounded-[3.5rem] border border-white/5 text-center shadow-2xl">
+            <div className="w-full max-sm bg-zinc-900 p-12 rounded-[3.5rem] border border-white/5 text-center shadow-2xl">
                 <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-10 shadow-lg shadow-blue-500/20">
                     <Icon name="ShieldCheck" size={40} className="text-white" />
                 </div>
