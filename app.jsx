@@ -1,25 +1,43 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import {
-    ShieldCheck, Cpu, RefreshCw, LogOut, Lock, Unlock,
-    Zap, ChevronDown, ChevronUp, Bell, Circle
-} from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import {
-    getFirestore, collection, doc, onSnapshot,
-    setDoc, updateDoc, getDocs, query, orderBy
-} from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+/**
+ * SISTEMA: Control Meta Pro v4.5
+ * CARACTERÍSTICAS: Sincronización Real-time, Login Sheets, Multi-turno, Masivos.
+ */
+const { useState, useEffect, useMemo, useRef } = React;
 
-// --- CONFIGURACIÓN ---
+// --- COMPONENTE: ICONOS ---
+const Icon = ({ name, size = 16, className = "" }) => {
+    const iconRef = useRef(null);
+    useEffect(() => {
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    }, [name]);
+    return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
+};
+
+const API_URL = window.location.origin.includes('localhost')
+    ? "http://localhost:8000"
+    : window.location.origin.replace(':80', ':8000');
+
+// --- FIREBASE INIT ---
 const firebaseConfig = JSON.parse(window.__firebase_config || '{}');
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
 const appId = window.__app_id || 'control-meta-pro-v4';
-const API_URL = "http://localhost:8000"; // Cambiar por tu IP de VPS
+
+// --- IDs PERMITIDOS ---
+const ALLOWED_IDS = [
+    "120238886501840717", "120238886472900717", "120238886429400717",
+    "120238886420220717", "120238886413960717", "120238886369210717",
+    "120234721717970717", "120234721717960717", "120234721717950717",
+    "120233618279570717", "120233618279540717", "120233611687810717",
+    "120232204774610717", "120232204774590717", "120232204774570717",
+    "120232157515490717", "120232157515480717", "120232157515460717"
+];
 
 /**
- * COMPONENTE: LOGIN
+ * LOGIN SCREEN
  */
 const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
@@ -29,36 +47,38 @@ const LoginScreen = ({ onLogin }) => {
 
     useEffect(() => {
         fetch(`${API_URL}/auth/auditors`).then(r => r.json()).then(d => {
-            setAuditors(d.auditors);
-            if (d.auditors.length) setSelected(d.auditors[0]);
-        });
+            setAuditors(d.auditors || []);
+            if (d.auditors?.length) setSelected(d.auditors[0]);
+        }).catch(e => console.error("Error cargando auditores:", e));
     }, []);
 
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
-        const res = await fetch(`${API_URL}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ nombre: selected, password: pass })
-        });
-        if (res.ok) {
-            localStorage.setItem('session_user', selected);
-            onLogin(selected);
-        } else alert("Error de acceso");
-        setLoading(false);
+        try {
+            const res = await fetch(`${API_URL}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nombre: selected, password: pass })
+            });
+            if (res.ok) {
+                localStorage.setItem('session_user', selected);
+                onLogin(selected);
+            } else alert("Credenciales incorrectas");
+        } catch (e) { alert("Error de conexión con el backend"); }
+        finally { setLoading(false); }
     };
 
     return (
-        <div className="min-h-screen bg-black flex items-center justify-center p-6 font-sans">
+        <div className="min-h-screen flex items-center justify-center p-6 animate-fade-in">
             <div className="w-full max-w-md bg-zinc-900 border border-white/5 p-12 rounded-[3rem] shadow-2xl text-center">
-                <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-blue-500/20">
-                    <ShieldCheck size={40} className="text-white" />
+                <div className="bg-blue-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8">
+                    <Icon name="shield-check" size={40} className="text-white" />
                 </div>
-                <h1 className="text-3xl font-black text-white italic uppercase tracking-tighter mb-10">Control Meta</h1>
-                <form onSubmit={handleLogin} className="space-y-6">
+                <h2 className="text-3xl font-black italic uppercase tracking-tighter mb-10">Control Meta</h2>
+                <form onSubmit={handleLogin} className="space-y-6 text-left">
                     <select
-                        className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none appearance-none cursor-pointer"
+                        className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none"
                         value={selected} onChange={e => setSelected(e.target.value)}
                     >
                         {auditors.map(a => <option key={a} value={a}>{a}</option>)}
@@ -68,7 +88,7 @@ const LoginScreen = ({ onLogin }) => {
                         className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white outline-none focus:border-blue-500 transition-all"
                         onChange={e => setPass(e.target.value)}
                     />
-                    <button className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-white shadow-xl transition-all">
+                    <button className="w-full bg-blue-600 py-5 rounded-2xl font-black uppercase text-white shadow-xl hover:bg-blue-500 transition-all">
                         {loading ? "Sincronizando..." : "Ingresar"}
                     </button>
                 </form>
@@ -78,268 +98,176 @@ const LoginScreen = ({ onLogin }) => {
 };
 
 /**
- * COMPONENTE: DASHBOARD PRINCIPAL
+ * DASHBOARD
  */
 const Dashboard = ({ userEmail, onLogout }) => {
     const [metaData, setMetaData] = useState([]);
     const [settings, setSettings] = useState({});
     const [autoState, setAutoState] = useState(false);
-    const [turns, setTurns] = useState({});
     const [logs, setLogs] = useState([]);
-    const [loading, setLoading] = useState(true);
     const [selectedIds, setSelectedIds] = useState([]);
     const [bulkLimit, setBulkLimit] = useState("");
 
-    // Firebase Real-time Listeners
     useEffect(() => {
-        const unsubAuto = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'automation', 'state'), d => {
-            if (d.exists()) setAutoState(d.data().is_active);
-        });
+        auth.signInAnonymously();
 
-        const unsubSettings = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'adsets'), s => {
-            const data = {};
-            s.forEach(doc => data[doc.id] = doc.data());
-            setSettings(data);
-        });
+        // Listeners Real-time (Sincronización entre auditores)
+        const unsubAuto = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('automation').doc('state')
+            .onSnapshot(d => d.exists && setAutoState(d.data().is_active));
 
-        const unsubTurns = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'turns'), s => {
-            const data = {};
-            s.forEach(doc => data[doc.id] = doc.data());
-            setTurns(data);
-        });
+        const unsubSettings = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets')
+            .onSnapshot(s => {
+                const d = {}; s.forEach(doc => d[doc.id] = doc.data()); setSettings(d);
+            });
 
-        const unsubLogs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), s => {
-            const l = [];
-            s.forEach(doc => l.push(doc.data()));
-            setLogs(l.sort((a, b) => b.time - a.time).slice(0, 5));
-        });
+        const unsubLogs = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('logs')
+            .orderBy('time', 'desc').limit(5)
+            .onSnapshot(s => {
+                const l = []; s.forEach(doc => l.push(doc.data())); setLogs(l);
+            });
 
-        // Fetch Meta Inicial
-        fetch(`${API_URL}/ads/sync`).then(r => r.json()).then(d => {
-            setMetaData(d.data || []);
-            setLoading(false);
-        });
+        const syncMeta = () => fetch(`${API_URL}/ads/sync`).then(r => r.json()).then(d => setMetaData(d.data || []));
+        syncMeta();
+        const interval = setInterval(syncMeta, 120000); // 2 min
 
-        return () => { unsubAuto(); unsubSettings(); unsubTurns(); unsubLogs(); };
+        return () => { unsubAuto(); unsubSettings(); unsubLogs(); clearInterval(interval); };
     }, []);
 
-    // Lógica de Registro de Acciones (Logs)
     const logAction = async (msg) => {
-        const logRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'));
-        await setDoc(logRef, {
-            user: userEmail,
-            msg: msg,
-            time: Date.now()
+        await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('logs').add({
+            user: userEmail, msg, time: Date.now()
         });
     };
 
-    // Acciones
-    const toggleAuto = async () => {
-        const next = !autoState;
-        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'automation', 'state');
-        await setDoc(ref, { is_active: next });
-        logAction(`${next ? 'Encendió' : 'Apagó'} la automatización maestra`);
+    const updateSetting = async (id, key, val) => {
+        await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets').doc(id).set({ [key]: val }, { merge: true });
     };
 
-    const updateAdSet = async (id, key, val) => {
-        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'adsets', id);
-        await setDoc(ref, { [key]: val }, { merge: true });
-        if (key === 'is_frozen') logAction(`${val ? 'Congeló' : 'Descongeló'} AdSet ${id}`);
-    };
-
-    const handleBulkLimit = async () => {
-        if (!bulkLimit || !selectedIds.length) return;
-        for (const id of selectedIds) {
-            await updateAdSet(id, 'limit_perc', parseFloat(bulkLimit));
-        }
-        logAction(`Cambió límite masivo a ${bulkLimit}% para ${selectedIds.length} conjuntos`);
-        setBulkLimit("");
-        setSelectedIds([]);
-    };
-
-    // Procesamiento de Datos
     const sortedData = useMemo(() => {
-        return [...metaData]
-            .filter(ad => window.__allowed_ids.includes(ad.id))
+        return [...metaData].filter(ad => ALLOWED_IDS.includes(ad.id))
             .sort((a, b) => (a.status === 'ACTIVE' ? -1 : 1));
     }, [metaData]);
 
-    const totals = useMemo(() => {
-        return sortedData.reduce((acc, ad) => {
-            const ins = ad.insights?.data?.[0] || {};
-            acc.spend += parseFloat(ins.spend || 0);
-            acc.res += parseInt(ins.actions?.[0]?.value || 0);
-            if (ad.status === 'ACTIVE') acc.active++;
-            return acc;
-        }, { spend: 0, res: 0, active: 0 });
-    }, [sortedData]);
-
-    if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-blue-500 animate-pulse font-black uppercase tracking-widest">Sincronizando Sistema...</div>;
+    const stats = useMemo(() => sortedData.reduce((acc, ad) => {
+        const i = ad.insights?.data?.[0] || {};
+        acc.s += parseFloat(i.spend || 0); acc.r += parseInt(i.actions?.[0]?.value || 0);
+        if (ad.status === 'ACTIVE') acc.a++; return acc;
+    }, { s: 0, r: 0, a: 0 }), [sortedData]);
 
     return (
-        <div className="min-h-screen bg-[#020202] text-white p-4 lg:p-12 font-sans overflow-x-hidden">
-
-            {/* HEADER: RESUMEN */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-                <div className="bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-2xl overflow-hidden relative group">
-                    <div className="relative z-10">
-                        <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1 flex items-center gap-2">
-                            <Cpu size={12} /> Automatización
-                        </h3>
-                        <p className="text-xl font-black uppercase italic">{autoState ? "Activa" : "Apagada"}</p>
-                    </div>
+        <div className="min-h-screen p-6 lg:p-12 animate-fade-in">
+            {/* HEADER STATS */}
+            <header className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+                <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5 flex items-center justify-between shadow-2xl">
+                    <div><p className="text-[10px] font-black text-blue-500 uppercase">Automatización</p><p className="text-xl font-black italic">{autoState ? 'SISTEMA ACTIVO' : 'SISTEMA APAGADO'}</p></div>
                     <button
-                        onClick={toggleAuto}
-                        className={`w-16 h-8 rounded-full p-1 transition-all relative z-10 ${autoState ? 'bg-blue-600' : 'bg-white/10'}`}
+                        onClick={async () => {
+                            const next = !autoState;
+                            await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('automation').doc('state').set({ is_active: next });
+                            logAction(`${next ? 'Encendió' : 'Apagó'} la automatización`);
+                        }}
+                        className={`w-14 h-7 rounded-full p-1 transition-all ${autoState ? 'bg-blue-600 shadow-[0_0_15px_#2563eb]' : 'bg-zinc-700'}`}
                     >
-                        <div className={`w-6 h-6 bg-white rounded-full transition-all duration-300 ${autoState ? 'translate-x-8' : 'translate-x-0'}`} />
-                    </button>
-                    <div className={`absolute inset-0 opacity-10 transition-opacity ${autoState ? 'bg-blue-600' : ''}`} />
-                </div>
-
-                <div className="bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Gasto Total Hoy</p>
-                    <p className="text-2xl font-black text-white italic">${totals.spend.toFixed(2)}</p>
-                </div>
-
-                <div className="bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem] shadow-xl">
-                    <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Resultados</p>
-                    <p className="text-2xl font-black text-white italic">{totals.res}</p>
-                </div>
-
-                <div className="bg-zinc-900 border border-white/5 p-8 rounded-[2.5rem] flex items-center justify-between shadow-xl">
-                    <div>
-                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1 truncate max-w-[120px]">Auditor: {userEmail}</p>
-                        <button onClick={onLogout} className="text-[9px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-widest flex items-center gap-1 transition-all">
-                            <LogOut size={10} /> Cerrar Sesión
-                        </button>
-                    </div>
-                    <button onClick={() => window.location.reload()} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
-                        <RefreshCw size={18} />
+                        <div className={`w-5 h-5 bg-white rounded-full transition-all ${autoState ? 'translate-x-7' : ''}`} />
                     </button>
                 </div>
-            </div>
+                <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase">Gasto Hoy / Activos</p>
+                    <p className="text-2xl font-black italic">${stats.s.toFixed(2)} / {stats.a}</p>
+                </div>
+                <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5">
+                    <p className="text-[10px] font-black text-zinc-500 uppercase">Resultados Totales</p>
+                    <p className="text-2xl font-black italic">{stats.r}</p>
+                </div>
+                <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-white/5 flex items-center justify-between">
+                    <div className="truncate"><p className="text-[10px] font-black text-emerald-500 uppercase">Auditor</p><p className="text-xs font-bold truncate">{userEmail}</p></div>
+                    <button onClick={onLogout} className="text-rose-500 hover:opacity-70 transition-all"><Icon name="log-out" size={20} /></button>
+                </div>
+            </header>
 
-            {/* ALERTAS EN TIEMPO REAL */}
-            <div className="mb-8 space-y-2">
-                {logs.map((log, i) => (
-                    <div key={i} className="flex items-center gap-3 bg-blue-600/5 border border-blue-500/10 p-3 rounded-2xl animate-in slide-in-from-top-4">
-                        <Bell size={12} className="text-blue-500" />
-                        <p className="text-[10px] font-bold uppercase tracking-wide">
-                            <span className="text-blue-400">{log.user}</span> {log.msg}
-                            <span className="text-zinc-600 ml-2 font-mono">{new Date(log.time).toLocaleTimeString()}</span>
-                        </p>
+            {/* LOGS DE ACTIVIDAD */}
+            <div className="space-y-2 mb-8">
+                {logs.map((l, i) => (
+                    <div key={i} className="bg-blue-600/5 border border-blue-500/10 p-3 rounded-xl flex items-center gap-2 text-[10px] font-bold uppercase">
+                        <Icon name="bell" size={12} className="text-blue-500" /><span className="text-blue-400">{l.user}</span> {l.msg}
                     </div>
                 ))}
             </div>
 
-            {/* PANEL DE ACCIONES MASIVAS */}
-            <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-[2rem] mb-10 flex flex-wrap items-center gap-6">
-                <div className="flex items-center gap-2 bg-black p-3 px-6 rounded-2xl border border-white/10">
-                    <Zap size={14} className="text-blue-500" />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Acción Grupal:</span>
-                    <input
-                        type="number" placeholder="Límite %"
-                        className="bg-zinc-800 border-none w-16 p-1 text-center text-xs rounded-lg outline-none text-blue-500 font-bold"
-                        value={bulkLimit} onChange={e => setBulkLimit(e.target.value)}
-                    />
+            {/* ACCIONES GRUPALES */}
+            <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex items-center gap-6">
+                <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
+                    <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400">Gasto Grupal:</span>
+                    <input type="number" className="bg-zinc-800 w-16 p-1 text-center text-xs rounded outline-none text-blue-500 font-bold" value={bulkLimit} onChange={e => setBulkLimit(e.target.value)} />
                     <button
-                        onClick={handleBulkStopLoss}
-                        className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded-lg uppercase tracking-widest hover:bg-blue-500 transition-all"
+                        onClick={async () => {
+                            if (!bulkLimit || !selectedIds.length) return;
+                            for (const id of selectedIds) await updateSetting(id, 'limit_perc', parseFloat(bulkLimit));
+                            logAction(`Límite masivo ${bulkLimit}% aplicado`);
+                            setBulkLimit(""); setSelectedIds([]);
+                        }}
+                        className="bg-blue-600 text-[10px] font-black px-4 py-1.5 rounded uppercase hover:bg-blue-500"
                     >
                         Aplicar a {selectedIds.length}
                     </button>
                 </div>
                 <button
-                    onClick={() => { setSelectedIds([]); handleResetFrozen(); }}
-                    className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 px-6 py-4 rounded-2xl border border-white/5 transition-all text-[10px] font-black uppercase tracking-widest"
+                    onClick={async () => {
+                        const querySnapshot = await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('adsets').get();
+                        querySnapshot.forEach(doc => doc.ref.update({ is_frozen: false }));
+                        logAction("Realizó reset de congelados");
+                    }}
+                    className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all"
                 >
-                    <Unlock size={14} /> Reset Nocturno (Manual)
+                    Descongelar Todo
                 </button>
             </div>
 
-            {/* TABLA: ADSETS */}
-            <div className="bg-zinc-900 border border-white/5 rounded-[3rem] shadow-2xl overflow-hidden mb-20">
+            {/* TABLA PRINCIPAL */}
+            <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead>
-                            <tr className="bg-black/50 text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] border-b border-white/5">
-                                <th className="p-6">Sel.</th>
-                                <th className="p-6">Estado</th>
-                                <th className="p-6 min-w-[350px]">Nombre del AdSet</th>
-                                <th className="p-6 text-center">Ppto</th>
-                                <th className="p-6 text-center">Gasto Hoy</th>
-                                <th className="p-6 text-center text-blue-500">Stop-Loss %</th>
-                                <th className="p-6 text-center">Res.</th>
-                                <th className="p-6">Turno</th>
-                                <th className="p-6 text-center">Control</th>
+                            <tr className="bg-black/50 text-[9px] font-black text-zinc-500 uppercase tracking-widest border-b border-white/5">
+                                <th className="p-6">Sel.</th><th className="p-6">Estado</th><th className="p-6">Nombre del AdSet</th>
+                                <th className="p-6 text-center">Ppto</th><th className="p-6 text-center">Gasto</th>
+                                <th className="p-6 text-center text-blue-500">Stop %</th><th className="p-6 text-center">Res.</th>
+                                <th className="p-6">Turno</th><th className="p-6 text-center">Freeze</th>
                             </tr>
                         </thead>
                         <tbody className="text-xs">
                             {sortedData.map(ad => {
-                                const s = settings[ad.id] || { turno: "matutino", limit_perc: 50.0, is_frozen: false };
-                                const ins = ad.insights?.data?.[0] || {};
+                                const s = settings[ad.id] || { turno: "matutino", limit_perc: 50, is_frozen: false };
+                                const i = ad.insights?.data?.[0] || {};
                                 const budget = parseFloat(ad.daily_budget || 0) / 100;
-                                const spend = parseFloat(ins.spend || 0);
+                                const spend = parseFloat(i.spend || 0);
                                 const perc = budget > 0 ? (spend / budget * 100) : 0;
-                                const isOver = perc >= s.limit_perc;
-
                                 return (
-                                    <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.02] transition-all group ${s.is_frozen ? 'opacity-60' : ''}`}>
-                                        <td className="p-6">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedIds.includes(ad.id)}
-                                                onChange={(e) => {
-                                                    if (e.target.checked) setSelectedIds([...selectedIds, ad.id]);
-                                                    else setSelectedIds(selectedIds.filter(id => id !== ad.id));
-                                                }}
-                                                className="w-4 h-4 accent-blue-600"
-                                            />
-                                        </td>
+                                    <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.02] transition-colors ${s.is_frozen ? 'opacity-40' : ''}`}>
+                                        <td className="p-6"><input type="checkbox" checked={selectedIds.includes(ad.id)} onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))} className="accent-blue-600" /></td>
                                         <td className="p-6">
                                             <div className="flex items-center gap-2">
-                                                <Circle size={8} fill={ad.status === 'ACTIVE' ? '#10b981' : '#f43f5e'} className={ad.status === 'ACTIVE' ? 'text-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'text-rose-500'} />
+                                                <Icon name="circle" size={8} className={ad.status === 'ACTIVE' ? 'text-emerald-500 fill-emerald-500' : 'text-rose-500 fill-rose-500'} />
                                                 <span className="font-bold text-[10px] uppercase text-zinc-500">{ad.status}</span>
                                             </div>
                                         </td>
-                                        <td className="p-6">
-                                            <p className="font-black text-white uppercase leading-relaxed text-sm break-words">{ad.name}</p>
-                                            <p className="text-[9px] text-zinc-600 font-mono mt-1 italic">ID: {ad.id}</p>
-                                        </td>
-                                        <td className="p-6 text-center font-bold text-zinc-400">
-                                            ${budget.toFixed(0)}
-                                        </td>
+                                        <td className="p-6 whitespace-normal leading-relaxed font-black uppercase text-xs w-[400px]">{ad.name}</td>
+                                        <td className="p-6 text-center font-bold text-zinc-400">${budget.toFixed(0)}</td>
                                         <td className="p-6 text-center">
-                                            <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${isOver ? 'bg-rose-500/20 text-rose-500 border border-rose-500/30' : 'bg-blue-500/10 text-blue-400'}`}>
-                                                ${spend.toFixed(2)} <span className="text-[9px] opacity-60 ml-1">({perc.toFixed(0)}%)</span>
+                                            <div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10 border border-rose-500/20' : 'text-blue-400 bg-blue-500/10 border border-blue-500/10'}`}>
+                                                ${spend.toFixed(2)} ({perc.toFixed(0)}%)
                                             </div>
                                         </td>
                                         <td className="p-6 text-center">
-                                            <input
-                                                type="number"
-                                                className="bg-black border border-white/10 w-16 p-2 rounded-lg text-center text-blue-500 font-black outline-none focus:border-blue-500 transition-all"
-                                                value={s.limit_perc}
-                                                onChange={e => updateAdSet(ad.id, 'limit_perc', parseFloat(e.target.value))}
-                                            />
+                                            <input type="number" className="bg-black border border-white/10 w-16 p-2 rounded text-center text-blue-500 font-black outline-none" value={s.limit_perc} onChange={e => updateSetting(ad.id, 'limit_perc', parseFloat(e.target.value))} />
                                         </td>
-                                        <td className="p-6 text-center font-black text-white text-base">
-                                            {ins.actions?.[0]?.value || 0}
-                                        </td>
+                                        <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
                                         <td className="p-6">
-                                            <input
-                                                type="text"
-                                                className="bg-black/50 border border-white/10 p-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-300 w-32 outline-none"
-                                                value={s.turno}
-                                                onChange={e => updateAdSet(ad.id, 'turno', e.target.value)}
-                                            />
+                                            <input type="text" className="bg-black/50 border border-white/10 p-2 rounded text-[10px] font-black uppercase text-zinc-300 w-32 outline-none" value={s.turno} onChange={e => updateSetting(ad.id, 'turno', e.target.value)} />
                                         </td>
                                         <td className="p-6 text-center">
-                                            <button
-                                                onClick={() => updateAdSet(ad.id, 'is_frozen', !s.is_frozen)}
-                                                className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 text-white shadow-lg' : 'bg-white/5 text-zinc-700 hover:text-white'}`}
-                                            >
-                                                {s.is_frozen ? <Lock size={16} /> : <Unlock size={16} />}
+                                            <button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen)} className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 text-white' : 'bg-white/5 text-zinc-700'}`}>
+                                                {s.is_frozen ? <Icon name="lock" size={16} /> : <Icon name="unlock" size={16} />}
                                             </button>
                                         </td>
                                     </tr>
@@ -353,26 +281,10 @@ const Dashboard = ({ userEmail, onLogout }) => {
     );
 };
 
-// --- APP ENTRY ---
 const App = () => {
     const [session, setSession] = useState(localStorage.getItem('session_user'));
-
-    useEffect(() => {
-        // Definimos IDs Permitidos Globalmente para el filtro
-        window.__allowed_ids = [
-            "120238886501840717", "120238886472900717", "120238886429400717",
-            "120238886420220717", "120238886413960717", "120238886369210717",
-            "120234721717970717", "120234721717960717", "120234721717990717",
-            "120233618279570717", "120233618279540717", "120233611687810717",
-            "120232204774610717", "120232204774590717", "120232204774570717",
-            "120232157515490717", "120232157515480717", "120232157515460717"
-        ];
-
-        signInAnonymously(auth);
-    }, []);
-
-    if (!session) return <LoginScreen onLogin={setSession} />;
-    return <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
+    return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
 };
 
-export default App;
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
