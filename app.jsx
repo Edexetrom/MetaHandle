@@ -1,14 +1,17 @@
 /**
- * SISTEMA: Control Meta Pro v5.8 (SQLite Only)
- * FIX: Dinamismo de iconos corregido (Solo carga gira), Edición Grupal Restaurada, Switch Manual de Meta.
+ * SISTEMA: Control Meta Pro v5.9 (SQLite Only)
+ * CONTRATO: export default App (Sin ReactDOM.render)
+ * REQUERIMIENTOS: 1-18 implementados.
  */
 const { useState, useEffect, useMemo, useRef } = React;
 
-// --- COMPONENTE: ICONOS (Seguro para React) ---
+// --- COMPONENTE: ICONOS (Manejo de Re-renders) ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
+
     useEffect(() => {
         if (window.lucide && iconRef.current) {
+            // Limpieza para evitar duplicados de nodos SVG
             iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
             window.lucide.createIcons({
                 attrs: {
@@ -16,12 +19,19 @@ const Icon = ({ name, size = 16, className = "", spin = false }) => {
                     'width': size,
                     'height': size,
                     'class': `${className} ${spin ? 'animate-spin' : ''}`.trim()
-                }
+                },
+                nameAttr: 'data-lucide'
             });
         }
     }, [name, size, className, spin]);
 
-    return <span ref={iconRef} className="inline-flex items-center justify-center"></span>;
+    return (
+        <span
+            ref={iconRef}
+            className="inline-flex items-center justify-center pointer-events-none"
+            style={{ width: size, height: size }}
+        />
+    );
 };
 
 const API_URL = "https://manejoapi.libresdeumas.com";
@@ -35,6 +45,72 @@ const ALLOWED_IDS = [
     "120232157515490717", "120232157515480717", "120232157515460717"
 ];
 
+/**
+ * LOGIN SCREEN
+ */
+const LoginScreen = ({ onLogin }) => {
+    const [auditors, setAuditors] = useState([]);
+    const [selected, setSelected] = useState("");
+    const [pass, setPass] = useState("");
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        fetch(`${API_URL}/auth/auditors`).then(r => r.json()).then(d => {
+            setAuditors(d.auditors || []);
+            if (d.auditors?.length) setSelected(d.auditors[0]);
+        }).catch(err => console.error("Error cargando auditores:", err));
+    }, []);
+
+    const handleLogin = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nombre: selected, password: pass })
+            });
+            if (res.ok) {
+                const user = await res.json();
+                localStorage.setItem('session_user', user.user);
+                onLogin(user.user);
+            } else alert("Credenciales incorrectas");
+        } catch (e) { alert("Error de conexión con el servidor"); }
+        finally { setLoading(false); }
+    };
+
+    return (
+        <div className="min-h-screen flex items-center justify-center bg-black p-4">
+            <div className="w-full max-w-sm bg-zinc-900 p-10 rounded-[3rem] border border-white/5 text-center shadow-2xl">
+                <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                    <Icon name="shield-check" size={32} className="text-white" />
+                </div>
+                <h1 className="text-2xl font-black text-white italic uppercase mb-8">Control Meta</h1>
+                <form onSubmit={handleLogin} className="space-y-4">
+                    <select
+                        className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none appearance-none cursor-pointer"
+                        value={selected}
+                        onChange={e => setSelected(e.target.value)}
+                    >
+                        {auditors.map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
+                    <input
+                        type="password" placeholder="Contraseña" required
+                        className="w-full bg-black border border-white/10 rounded-xl p-4 text-white outline-none focus:border-blue-500 transition-all"
+                        onChange={e => setPass(e.target.value)}
+                    />
+                    <button className="w-full bg-blue-600 py-4 rounded-xl font-black uppercase text-white hover:bg-blue-500 shadow-lg">
+                        {loading ? "Entrando..." : "Ingresar"}
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+/**
+ * DASHBOARD
+ */
 const Dashboard = ({ userEmail, onLogout }) => {
     const [data, setData] = useState({ meta: [], settings: {}, turns: {}, automation_active: false, logs: [] });
     const [selectedIds, setSelectedIds] = useState([]);
@@ -59,7 +135,6 @@ const Dashboard = ({ userEmail, onLogout }) => {
         return () => clearInterval(interval);
     }, []);
 
-    // Encendido / Apagado Manual en Meta
     const toggleMetaStatus = async (id, currentStatus) => {
         const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
         setSyncing(true);
@@ -83,6 +158,15 @@ const Dashboard = ({ userEmail, onLogout }) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id, [key]: val, user: userEmail, log: logMsg })
         });
+    };
+
+    const updateTurn = async (name, start, end, days) => {
+        await fetch(`${API_URL}/turns/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, start, end, days })
+        });
+        fetchSync(true);
     };
 
     const handleBulkAction = async () => {
@@ -111,7 +195,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
     return (
         <div className="min-h-screen bg-[#020202] text-white p-4 lg:p-10 font-sans italic tracking-tight">
 
-            {/* HEADER */}
+            {/* HEADER SUMMARY */}
             <header className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 <div className="bg-zinc-900/50 p-6 rounded-[2rem] border border-white/5 flex items-center justify-between shadow-xl">
                     <div><p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Automatización</p><p className="text-xl font-black uppercase">{data.automation_active ? 'Activa' : 'Apagada'}</p></div>
@@ -143,13 +227,12 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             <Icon name="bell" size={18} className={data.logs.length > 0 ? "text-blue-500" : "text-zinc-500"} />
                             {data.logs.length > 0 && <span className="absolute top-0 right-0 w-2 h-2 bg-rose-500 rounded-full animate-ping"></span>}
                         </button>
-                        {/* ICONO SALIR - YA NO GIRA */}
                         <button onClick={onLogout} className="p-2 text-rose-600 hover:text-rose-400"><Icon name="log-out" size={18} /></button>
                     </div>
                 </div>
             </header>
 
-            {/* MODAL NOTIFICACIONES */}
+            {/* NOTIFICACIONES PANEL (Punto 10) */}
             {showLogs && (
                 <div className="fixed inset-0 z-50 flex items-start justify-end p-10 pointer-events-none">
                     <div className="w-80 bg-zinc-900 border border-white/10 rounded-[2rem] shadow-2xl p-6 pointer-events-auto animate-fade-in">
@@ -169,20 +252,18 @@ const Dashboard = ({ userEmail, onLogout }) => {
                 </div>
             )}
 
-            {/* TABS Y CARGA */}
+            {/* NAVIGATION TABS */}
             <div className="flex gap-4 mb-6">
                 <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
                 <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
-
-                {/* ICONO DE CARGA - SOLO ESTE GIRA */}
-                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all border border-white/5 shadow-xl">
+                <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl hover:bg-zinc-800 transition-all border border-white/5">
                     <Icon name="refresh-cw" spin={syncing} size={16} className="text-blue-500" />
                 </button>
             </div>
 
             {view === 'panel' ? (
                 <>
-                    {/* ACCIONES GRUPALES RESTAURADAS */}
+                    {/* ACCIONES GRUPALES (Punto 5) */}
                     <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl animate-fade-in">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10">
                             <Icon name="zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
@@ -195,6 +276,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                         }} className="text-[10px] font-black uppercase bg-zinc-800 px-6 py-4 rounded-2xl border border-white/5 hover:bg-zinc-700 transition-all tracking-widest">Descongelar Todos</button>
                     </div>
 
+                    {/* TABLA PRINCIPAL (Punto 11-15) */}
                     <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
@@ -230,7 +312,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                     />
                                                 </td>
                                                 <td className="p-6">
-                                                    {/* Punto 11: LED + Punto 2/3: APAGADO MANUAL */}
+                                                    {/* LED DINÁMICO + APAGADO MANUAL (Punto 2/3/11) */}
                                                     <div className="flex items-center gap-3">
                                                         <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? 'bg-emerald-400 shadow-[0_0_12px_#34d399]' : 'bg-rose-900/30 border border-rose-500/10'}`}></div>
                                                         <button
@@ -268,11 +350,28 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </>
             ) : (
+                /* GESTIÓN DE TURNOS (Punto 4) */
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in">
-                    {/* Vista de Turnos igual a v5.7 */}
                     {Object.keys(data.turns).length > 0 ? Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
-                            {/* Contenido de turnos... */}
+                            <div className="flex items-center gap-3 mb-8">
+                                <div className="bg-blue-600/10 p-3 rounded-2xl"><Icon name="clock" className="text-blue-500" size={20} /></div>
+                                <h2 className="text-lg font-black uppercase tracking-widest">{name}</h2>
+                            </div>
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Hora Inicio (Decimal 24h)</label>
+                                    <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold" value={config.start} onChange={e => updateTurn(name, e.target.value, config.end, config.days)} />
+                                </div>
+                                <div>
+                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Hora Fin (Decimal 24h)</label>
+                                    <input type="number" step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold" value={config.end} onChange={e => updateTurn(name, config.start, e.target.value, config.days)} />
+                                </div>
+                                <div>
+                                    <label className="text-[9px] font-black text-zinc-500 uppercase block mb-2 tracking-widest">Días de Actividad</label>
+                                    <input type="text" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold uppercase" value={config.days} onChange={e => updateTurn(name, config.start, config.end, e.target.value)} />
+                                </div>
+                            </div>
                         </div>
                     )) : <p className="text-zinc-500 uppercase font-black">No hay turnos configurados aún.</p>}
                 </div>
@@ -280,6 +379,13 @@ const Dashboard = ({ userEmail, onLogout }) => {
         </div>
     );
 };
-// ... LoginScreen y App se mantienen igual ...
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+
+/**
+ * ENTRY POINT COMPONENT
+ */
+const App = () => {
+    const [session, setSession] = useState(localStorage.getItem('session_user'));
+    return !session ? <LoginScreen onLogin={setSession} /> : <Dashboard userEmail={session} onLogout={() => { localStorage.removeItem('session_user'); setSession(null); }} />;
+};
+
+export default App;
