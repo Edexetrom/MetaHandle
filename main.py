@@ -120,25 +120,57 @@ async def automation_engine():
         try:
             state = db.query(AutomationState).first()
             if not state or not state.is_active: continue
+            
             mex_tz = pytz.timezone('America/Mexico_City')
             now = datetime.now(mex_tz)
             curr_h = now.hour + (now.minute / 60)
+            day_of_week = now.weekday() # 0=Lunes, 4=Viernes, 5=Sábado, 6=Domingo
+            
             turns = {t.name.lower(): t for t in db.query(TurnConfig).all()}
             meta_data = await get_meta_data_cached()
+            
             for ad in meta_data:
                 s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
                 if not s or s.is_frozen: continue
+                
                 assigned = [t.strip().lower() for t in s.turno.split(",")]
-                in_time = any(turns.get(t) and turns[t].start_hour <= curr_h < turns[t].end_hour for t in assigned)
+                
+                # Validación de Día y Hora
+                in_time = False
+                for t_name in assigned:
+                    turn = turns.get(t_name)
+                    if not turn: continue
+                    
+                    # Validación de rango de hora
+                    time_match = turn.start_hour <= curr_h < turn.end_hour
+                    
+                    # Validación de día de la semana
+                    day_match = False
+                    days_cfg = turn.days.upper()
+                    if days_cfg == "L-V":
+                        day_match = 0 <= day_of_week <= 4
+                    elif days_cfg == "S":
+                        day_match = day_of_week == 5
+                    elif days_cfg == "D":
+                        day_match = day_of_week == 6
+                    # Si el campo contiene días específicos separados por coma (ej: "L,M,X") se podría extender aquí
+                    
+                    if time_match and day_match:
+                        in_time = True
+                        break
+
                 spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0)) if ad.get("insights") else 0
                 budget = float(ad.get("daily_budget", 0)) / 100
                 over = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
+                
                 should_be_active = in_time and not over
+                
                 if should_be_active and ad['status'] != 'ACTIVE':
                     await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "ACTIVE", "access_token": META_ACCESS_TOKEN})
                 elif not should_be_active and ad['status'] == 'ACTIVE':
                     await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "PAUSED", "access_token": META_ACCESS_TOKEN})
-        except: pass
+        except Exception as e:
+            logging.error(f"Automation Engine Error: {e}")
         finally: db.close()
 
 # --- ENDPOINTS ---
