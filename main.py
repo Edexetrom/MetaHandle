@@ -119,10 +119,23 @@ async def automation_engine():
         db = SessionLocal()
         try:
             state = db.query(AutomationState).first()
-            if not state or not state.is_active: continue
+            if not state: continue
             
             mex_tz = pytz.timezone('America/Mexico_City')
             now = datetime.now(mex_tz)
+            
+            # --- BLINDADO NOCTURNO / MATUTINO ---
+            # Si es el final del día (ej. 23:50 a 23:59) o las 6:00 a 6:10 am, y la automatización está apagada, la encendemos.
+            is_night_safeguard = now.hour == 23 and now.minute >= 50
+            is_morning_safeguard = now.hour == 6 and now.minute <= 10
+            
+            if not state.is_active and (is_night_safeguard or is_morning_safeguard):
+                state.is_active = True
+                db.add(ActionLog(user="Sistema", msg="Auto-ON (Blindaje)"))
+                db.commit()
+                
+            if not state.is_active: continue
+            
             curr_h = now.hour + (now.minute / 60)
             day_of_week = now.weekday() # 0=Lunes, 4=Viernes, 5=Sábado, 6=Domingo
             

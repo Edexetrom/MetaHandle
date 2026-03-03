@@ -80,6 +80,19 @@ const TurnSelector = ({ currentTurnos, availableTurns, onUpdate }) => {
     );
 };
 
+const floatToTime = (val) => {
+    const v = parseFloat(val) || 0;
+    const h = Math.floor(v);
+    const m = Math.round((v - h) * 60);
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+};
+
+const timeToFloat = (val) => {
+    if (!val) return 0;
+    const [h, m] = val.toString().split(':');
+    return parseInt(h || 0) + (parseInt(m || 0) / 60);
+};
+
 const API_URL = "https://manejoapi.libresdeumas.com";
 const ALLOWED_IDS = ["120238886501840717", "120238886472900717", "120238886429400717", "120238886420220717", "120238886413960717", "120238886369210717", "120234721717970717", "120234721717960717", "120234721717950717", "120233618279570717", "120233618279540717", "120233611687810717", "120232204774610717", "120232204774590717", "120232204774570717", "120232157515490717", "120232157515480717", "120232157515460717"];
 
@@ -241,14 +254,16 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             <div className="flex items-center gap-3 mb-8"><div className="bg-blue-600/10 p-3 rounded-[1.5rem]"><Icon name="Clock" className="text-blue-500" size={24} /></div><h2 className="text-xl font-black uppercase text-zinc-100">{name}</h2></div>
                             <div className="space-y-6">
                                 <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Inicio (24h)</label>
-                                    <FluidInput value={config.start} step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none" onSave={async (val) => {
-                                        await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: val, end: config.end, days: config.days }) });
+                                    <FluidInput type="time" value={floatToTime(config.start)} className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none [color-scheme:dark]" onSave={async (val) => {
+                                        const startFloat = timeToFloat(val);
+                                        await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: startFloat, end: config.end, days: config.days }) });
                                         fetchSync(true);
                                     }} />
                                 </div>
                                 <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Fin (24h)</label>
-                                    <FluidInput value={config.end} step="0.5" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none" onSave={async (val) => {
-                                        await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: val, days: config.days }) });
+                                    <FluidInput type="time" value={floatToTime(config.end)} className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none [color-scheme:dark]" onSave={async (val) => {
+                                        const endFloat = timeToFloat(val);
+                                        await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: endFloat, days: config.days }) });
                                         fetchSync(true);
                                     }} />
                                 </div>
