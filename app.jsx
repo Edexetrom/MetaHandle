@@ -80,6 +80,46 @@ const TurnSelector = ({ currentTurnos, availableTurns, onUpdate }) => {
     );
 };
 
+// --- COMPONENTE: SELECTOR DE DIAS ---
+const DaySelector = ({ value, onUpdate }) => {
+    const daysMap = [
+        { key: 'L', label: 'L' }, { key: 'M', label: 'M' }, { key: 'X', label: 'M' },
+        { key: 'J', label: 'J' }, { key: 'V', label: 'V' }, { key: 'S', label: 'S' },
+        { key: 'D', label: 'D' }
+    ];
+    
+    const activeDays = useMemo(() => {
+        if (!value) return [];
+        if (value === "L-V") return ['L', 'M', 'X', 'J', 'V'];
+        if (value === "S") return ['S'];
+        if (value === "D") return ['D'];
+        return value.split(',').map(d => d.trim().toUpperCase());
+    }, [value]);
+    
+    const toggleDay = (key) => {
+        let newDays = [...activeDays];
+        if (newDays.includes(key)) newDays = newDays.filter(k => k !== key);
+        else newDays.push(key);
+        
+        newDays.sort((a, b) => daysMap.findIndex(d => d.key === a) - daysMap.findIndex(d => d.key === b));
+        onUpdate(newDays.join(','));
+    };
+    
+    return (
+        <div className="flex gap-2 justify-center">
+            {daysMap.map(d => (
+                <button
+                    key={d.key}
+                    onClick={() => toggleDay(d.key)}
+                    className={`w-8 h-8 rounded-full text-[10px] font-black transition-all flex items-center justify-center ${activeDays.includes(d.key) ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'bg-black text-zinc-500 border border-white/10 hover:border-white/20'}`}
+                >
+                    {d.label}
+                </button>
+            ))}
+        </div>
+    );
+};
+
 const floatToTime = (val) => {
     const v = parseFloat(val) || 0;
     const h = Math.floor(v);
@@ -266,6 +306,14 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                         await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: endFloat, days: config.days }) });
                                         fetchSync(true);
                                     }} />
+                                </div>
+                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Días Activos</label>
+                                    <div className="bg-black border border-white/10 p-3 rounded-2xl">
+                                        <DaySelector value={config.days} onUpdate={async (val) => {
+                                            await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: config.end, days: val }) });
+                                            fetchSync(true);
+                                        }} />
+                                    </div>
                                 </div>
                             </div>
                         </div>

@@ -89,12 +89,20 @@ async def startup_event():
     db = SessionLocal()
     if not db.query(AutomationState).first():
         db.add(AutomationState(id=1, is_active=False))
-    if not db.query(TurnConfig).first():
-        db.add_all([
-            TurnConfig(name="matutino", start_hour=6.0, end_hour=13.0, days="L-V"),
-            TurnConfig(name="vespertino", start_hour=13.0, end_hour=21.0, days="L-V"),
-            TurnConfig(name="fsemana", start_hour=8.0, end_hour=14.0, days="S")
-        ])
+    existing_turns = {t.name: t for t in db.query(TurnConfig).all()}
+    defaults = {
+        "matutino": {"start_hour": 6.5, "end_hour": 13.0, "days": "L,M,X,J,V"},
+        "vespertino": {"start_hour": 11.0, "end_hour": 18.0, "days": "L,M,X,J,V"},
+        "nocturno": {"start_hour": 13.0, "end_hour": 21.0, "days": "L,M,X,J,V"},
+        "fsemana": {"start_hour": 7.0, "end_hour": 17.5, "days": "S"}
+    }
+    
+    if not existing_turns:
+        db.add_all([TurnConfig(name=k, **v) for k, v in defaults.items()])
+    else:
+        for k, v in defaults.items():
+            if k not in existing_turns:
+                db.add(TurnConfig(name=k, **v))
     db.commit(); db.close()
     asyncio.create_task(automation_engine())
 
@@ -159,14 +167,20 @@ async def automation_engine():
                     
                     # Validación de día de la semana
                     day_match = False
-                    days_cfg = turn.days.upper()
+                    days_cfg = turn.days.upper().strip()
                     if days_cfg == "L-V":
                         day_match = 0 <= day_of_week <= 4
                     elif days_cfg == "S":
                         day_match = day_of_week == 5
                     elif days_cfg == "D":
                         day_match = day_of_week == 6
-                    # Si el campo contiene días específicos separados por coma (ej: "L,M,X") se podría extender aquí
+                    else:
+                        day_map = {'L': 0, 'M': 1, 'X': 2, 'J': 3, 'V': 4, 'S': 5, 'D': 6}
+                        target_days = [day_map.get(d.strip()) for d in days_cfg.split(',') if d.strip() in day_map]
+                        if target_days:
+                            day_match = day_of_week in target_days
+                        else:
+                            day_match = True
                     
                     if time_match and day_match:
                         in_time = True
