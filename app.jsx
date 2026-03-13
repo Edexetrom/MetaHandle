@@ -143,6 +143,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
     const [syncing, setSyncing] = useState(false);
     const [showLogs, setShowLogs] = useState(false);
     const [view, setView] = useState('panel');
+    const [newTurnName, setNewTurnName] = useState("");
 
     const fetchSync = useCallback(async (silent = false) => {
         if (!silent) setSyncing(true);
@@ -288,36 +289,87 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-fade-in text-left">
-                    {Object.entries(data.turns).map(([name, config]) => (
-                        <div key={name} className="bg-zinc-900/50 p-10 rounded-[3rem] border border-white/5 shadow-2xl">
-                            <div className="flex items-center gap-3 mb-8"><div className="bg-blue-600/10 p-3 rounded-[1.5rem]"><Icon name="Clock" className="text-blue-500" size={24} /></div><h2 className="text-xl font-black uppercase text-zinc-100">{name}</h2></div>
-                            <div className="space-y-6">
-                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Inicio (24h)</label>
-                                    <FluidInput type="time" value={floatToTime(config.start)} className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none [color-scheme:dark]" onSave={async (val) => {
-                                        const startFloat = timeToFloat(val);
-                                        await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: startFloat, end: config.end, days: config.days }) });
-                                        fetchSync(true);
-                                    }} />
-                                </div>
-                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Fin (24h)</label>
-                                    <FluidInput type="time" value={floatToTime(config.end)} className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none [color-scheme:dark]" onSave={async (val) => {
-                                        const endFloat = timeToFloat(val);
-                                        await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: endFloat, days: config.days }) });
-                                        fetchSync(true);
-                                    }} />
-                                </div>
-                                <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Días Activos</label>
-                                    <div className="bg-black border border-white/10 p-3 rounded-2xl">
-                                        <DaySelector value={config.days} onUpdate={async (val) => {
-                                            await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: config.end, days: val }) });
-                                            fetchSync(true);
-                                        }} />
+                <div className="animate-fade-in text-left space-y-8">
+                    {/* CREAR TURNO PERSONALIZADO */}
+                    <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 flex flex-wrap items-center gap-6 shadow-xl">
+                        <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10 shadow-inner w-full md:w-auto">
+                            <Icon name="Plus" size={14} className="text-blue-500" />
+                            <span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest whitespace-nowrap">Nuevo Turno:</span>
+                            <input 
+                                type="text" 
+                                className="bg-zinc-800 flex-1 md:w-48 p-2 text-xs rounded-xl outline-none text-white font-bold" 
+                                placeholder="Nombre (ej. Especial)" 
+                                value={newTurnName} 
+                                onChange={e => setNewTurnName(e.target.value)} 
+                            />
+                            <button 
+                                onClick={async () => {
+                                    if (!newTurnName) return;
+                                    const normalized = newTurnName.trim().toLowerCase();
+                                    if (data.turns[normalized]) return alert('El turno ya existe');
+                                    await fetch(`${API_URL}/turns/update`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ name: normalized, start: 0, end: 0, days: "L,M,X,J,V" })
+                                    });
+                                    setNewTurnName('');
+                                    fetchSync(true);
+                                }}
+                                className="bg-blue-600 text-[10px] font-black px-4 py-2 rounded-xl uppercase hover:bg-blue-500 transition-all text-white whitespace-nowrap"
+                            >
+                                Crear
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                        {Object.entries(data.turns).map(([name, config]) => {
+                            const isPredefined = ['matutino', 'vespertino', 'nocturno', 'fsemana'].includes(name.toLowerCase());
+                            return (
+                                <div key={name} className="bg-zinc-900/50 p-10 rounded-[3rem] border border-white/5 shadow-2xl relative">
+                                    {!isPredefined && (
+                                        <button 
+                                            onClick={async () => {
+                                                if(window.confirm(`¿Deseas eliminar el turno ${name}?`)) {
+                                                    await fetch(`${API_URL}/turns/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+                                                    fetchSync(true);
+                                                }
+                                            }}
+                                            className="absolute top-8 right-8 p-3 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all"
+                                            title="Eliminar turno personalizado"
+                                        >
+                                            <Icon name="Trash2" size={16} />
+                                        </button>
+                                    )}
+                                    <div className="flex items-center gap-3 mb-8"><div className="bg-blue-600/10 p-3 rounded-[1.5rem]"><Icon name="Clock" className="text-blue-500" size={24} /></div><h2 className="text-xl font-black uppercase text-zinc-100 pr-12">{name}</h2></div>
+                                    <div className="space-y-6">
+                                        <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Inicio (24h)</label>
+                                            <FluidInput type="time" value={floatToTime(config.start)} className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none [color-scheme:dark]" onSave={async (val) => {
+                                                const startFloat = timeToFloat(val);
+                                                await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: startFloat, end: config.end, days: config.days }) });
+                                                fetchSync(true);
+                                            }} />
+                                        </div>
+                                        <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Fin (24h)</label>
+                                            <FluidInput type="time" value={floatToTime(config.end)} className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none [color-scheme:dark]" onSave={async (val) => {
+                                                const endFloat = timeToFloat(val);
+                                                await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: endFloat, days: config.days }) });
+                                                fetchSync(true);
+                                            }} />
+                                        </div>
+                                        <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Días Activos</label>
+                                            <div className="bg-black border border-white/10 p-3 rounded-2xl">
+                                                <DaySelector value={config.days} onUpdate={async (val) => {
+                                                    await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: config.end, days: val }) });
+                                                    fetchSync(true);
+                                                }} />
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-                    ))}
+                            );
+                        })}
+                    </div>
                 </div>
             )}
         </div>

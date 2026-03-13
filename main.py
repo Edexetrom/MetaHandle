@@ -262,6 +262,19 @@ async def update_turn(req: dict):
         db.commit(); return {"ok": True}
     finally: db.close()
 
+@app.post("/turns/delete")
+async def delete_turn(req: dict):
+    db = SessionLocal()
+    try:
+        t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
+        if t and t.name.lower() not in ["matutino", "vespertino", "nocturno", "fsemana"]:
+            db.delete(t)
+            db.commit()
+            return {"ok": True}
+        return {"ok": False, "msg": "No se puede eliminar un turno predefinido"}
+    finally: db.close()
+
+
 @app.post("/ads/automation/toggle")
 async def toggle_auto(req: dict):
     db = SessionLocal()
