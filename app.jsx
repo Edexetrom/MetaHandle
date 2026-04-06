@@ -1,13 +1,14 @@
 /**
- * SISTEMA: Control Meta Pro v2.23 (Restauración de Funciones)
+ * SISTEMA: Control Meta Pro v3.0 (Fase 1, 2 y 3)
  * AJUSTES: 
- * 1. Restaurado LOGIN y AUDITORES.
- * 2. Restaurado ACCIÓN MASIVA (Bulk Update).
- * 3. Mantenimiento de fluidez de entrada y caché 10s.
+ * 1. Arquitectura Modular y Entorno Dinámico.
+ * 2. Nuevas Columnas Panel (Inversión Extendida, Alertas, Límite de Puja).
+ * 3. Gestión Blackout Dates (Turnos Festivos).
+ * 4. Pestaña de Gestión de Medios (Rotación Creativa).
  */
 const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-// --- COMPONENTE: ICONOS (Mantenimiento Scoped) ---
+// --- COMPONENTE: ICONOS ---
 const Icon = ({ name, size = 16, className = "", spin = false }) => {
     const iconRef = useRef(null);
     useEffect(() => {
@@ -26,7 +27,7 @@ const Icon = ({ name, size = 16, className = "", spin = false }) => {
 };
 
 // --- COMPONENTE: INPUT OPTIMIZADO ---
-const FluidInput = ({ value, onSave, className, type = "number", step = "1" }) => {
+const FluidInput = ({ value, onSave, className, type = "number", step = "1", prefix=""}) => {
     const [localValue, setLocalValue] = useState(value);
     const [isEditing, setIsEditing] = useState(false);
     useEffect(() => { if (!isEditing) setLocalValue(value); }, [value, isEditing]);
@@ -133,17 +134,30 @@ const timeToFloat = (val) => {
     return parseInt(h || 0) + (parseInt(m || 0) / 60);
 };
 
-const API_URL = "https://manejoapi.libresdeumas.com";
-const ALLOWED_IDS = ["120238886501840717", "120238886472900717", "120238886429400717", "120238886420220717", "120238886413960717", "120238886369210717", "120234721717970717", "120234721717960717", "120234721717950717", "120233618279570717", "120233618279540717", "120233611687810717", "120232204774610717", "120232204774590717", "120232204774570717", "120232157515490717", "120232157515480717", "120232157515460717"];
+const API_URL = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") 
+    ? "http://localhost:8000" 
+    : "https://manejoapi.libresdeumas.com";
 
+const ALLOWED_IDS = [
+    "120238886501840717", "120238886472900717", "120238886429400717", "120238886420220717", 
+    "120238886413960717", "120238886369210717", "120234721717970717", "120234721717960717", 
+    "120234721717950717", "120233618279570717", "120233618279540717", "120233611687810717", 
+    "120232204774610717", "120232204774590717", "120232204774570717", "120232157515490717", 
+    "120232157515480717", "120232157515460717"
+];
+
+// --- VISTA DASHBOARD ---
 const Dashboard = ({ userEmail, onLogout }) => {
     const [data, setData] = useState({ meta: [], settings: {}, turns: {}, automation_active: false, logs: [] });
     const [selectedIds, setSelectedIds] = useState([]);
     const [bulkLimit, setBulkLimit] = useState("");
     const [syncing, setSyncing] = useState(false);
     const [showLogs, setShowLogs] = useState(false);
-    const [view, setView] = useState('panel');
+    const [view, setView] = useState('panel'); // panel | turnos | medios
     const [newTurnName, setNewTurnName] = useState("");
+    const [holidays, setHolidays] = useState([]);
+    const [newHoliday, setNewHoliday] = useState("");
+    const [mediosData, setMediosData] = useState([]);
 
     const fetchSync = useCallback(async (silent = false) => {
         if (!silent) setSyncing(true);
@@ -151,13 +165,28 @@ const Dashboard = ({ userEmail, onLogout }) => {
             const res = await fetch(`${API_URL}/ads/sync`);
             const json = await res.json();
             if (json) setData(json);
+            
+            // Si estamos en vista de turnos, obtén los holidays
+            if (view === 'turnos') {
+                const resH = await fetch(`${API_URL}/holidays/`);
+                const jsonH = await resH.json();
+                setHolidays(jsonH.dates || []);
+            }
+            
+            // Si estamos en vista de medios, obtén los medios
+            if (view === 'medios') {
+                const resM = await fetch(`${API_URL}/ads/medios`);
+                const jsonM = await resM.json();
+                setMediosData(jsonM.data || []);
+            }
+            
         } catch (e) { console.error("Sync Error", e); }
         finally { if (!silent) setSyncing(false); }
-    }, []);
+    }, [view]);
 
     useEffect(() => {
         fetchSync();
-        const interval = setInterval(() => fetchSync(true), 25000);
+        const interval = setInterval(() => fetchSync(true), 15000); // 15s refetch
         return () => clearInterval(interval);
     }, [fetchSync]);
 
@@ -183,6 +212,39 @@ const Dashboard = ({ userEmail, onLogout }) => {
     const updateSetting = async (id, key, val) => {
         setData(prev => ({ ...prev, settings: { ...prev.settings, [id]: { ...prev.settings[id], [key]: val } } }));
         await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, [key]: val, user: userEmail }) });
+    };
+
+    const updateBid = async (id, bidVal) => {
+        const adIdx = data.meta.findIndex(a => a.id === id);
+        if(adIdx > -1) {
+            const newMeta = [...data.meta];
+            newMeta[adIdx].bid_amount = bidVal;
+            setData(prev => ({...prev, meta: newMeta}));
+        }
+        await fetch(`${API_URL}/ads/bid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, bid_amount: bidVal, user: userEmail }) });
+    };
+
+    const addHoliday = async () => {
+        if(!newHoliday) return;
+        await fetch(`${API_URL}/holidays/add`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: newHoliday, user: userEmail }) });
+        setNewHoliday("");
+        fetchSync(true);
+    };
+
+    const removeHoliday = async (dateStr) => {
+        await fetch(`${API_URL}/holidays/remove`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: dateStr, user: userEmail }) });
+        fetchSync(true);
+    };
+
+    const toggleMedio = async (onId, offId) => {
+        setSyncing(true);
+        await fetch(`${API_URL}/ads/medios/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ad_id_on: onId, ad_id_off: offId, user: userEmail }) });
+        fetchSync();
+    };
+
+    const copyToClipboard = (text) => {
+        navigator.clipboard.writeText(text);
+        // Pequeño workaround de feedback
     };
 
     const sortedData = useMemo(() => {
@@ -228,12 +290,14 @@ const Dashboard = ({ userEmail, onLogout }) => {
             <div className="flex gap-4 mb-6">
                 <button onClick={() => setView('panel')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'panel' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Panel Control</button>
                 <button onClick={() => setView('turnos')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'turnos' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Gestión Turnos</button>
+                <button onClick={() => setView('medios')} className={`px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${view === 'medios' ? 'bg-blue-600 shadow-lg' : 'bg-zinc-900 text-zinc-500'}`}>Medios</button>
+                
                 <button onClick={() => fetchSync()} className="ml-auto bg-zinc-900 p-3 rounded-xl border border-white/5 transition-all"><Icon name="RefreshCw" spin={syncing} size={16} className="text-blue-500" /></button>
             </div>
 
-            {view === 'panel' ? (
+            {view === 'panel' && (
                 <>
-                    {/* ACCIÓN MASIVA (Restaurado) */}
+                    {/* ACCIÓN MASIVA */}
                     <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 mb-8 flex flex-wrap items-center gap-6 shadow-xl animate-fade-in">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10 shadow-inner">
                             <Icon name="Zap" size={14} className="text-blue-500" /><span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Límite Masivo:</span>
@@ -251,10 +315,12 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                         <th className="p-6">LED / Manual</th>
                                         <th className="p-6 min-w-[350px]">Nombre Completo del AdSet</th>
                                         <th className="p-6 text-center">Inversión</th>
+                                        <th className="p-6 text-center">Puja (Cts)</th>
                                         <th className="p-6 text-center text-blue-500">Stop %</th>
                                         <th className="p-6 text-center">Resultados</th>
                                         <th className="p-6">Turnos</th>
                                         <th className="p-6 text-center">Freeze</th>
+                                        <th className="p-6 text-center">A.</th>
                                     </tr>
                                 </thead>
                                 <tbody className="text-xs">
@@ -265,6 +331,10 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                         const spend = parseFloat(i.spend || 0);
                                         const perc = budget > 0 ? (spend / budget * 100) : 0;
                                         const active = ad.status === 'ACTIVE';
+                                        
+                                        // Validación de Errores (issues_info)
+                                        const hasIssues = ad.issues_info && ad.issues_info.length > 0;
+
                                         return (
                                             <tr key={ad.id} className={`border-b border-white/5 hover:bg-white/[0.01] transition-all ${s.is_frozen ? 'opacity-30' : ''}`}>
                                                 <td className="p-6"><input type="checkbox" className="accent-blue-600 w-4 h-4 cursor-pointer" checked={selectedIds.includes(ad.id)} onChange={e => e.target.checked ? setSelectedIds([...selectedIds, ad.id]) : setSelectedIds(selectedIds.filter(x => x !== ad.id))} /></td>
@@ -274,12 +344,47 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                         <button onClick={() => toggleMetaStatus(ad.id, ad.status)} className={`px-2 py-1.5 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg'}`}>{active ? 'Apagar' : 'Prender'}</button>
                                                     </div>
                                                 </td>
-                                                <td className="p-6 font-black uppercase text-[11px] italic tracking-tight leading-relaxed">{ad.name}</td>
-                                                <td className="p-6 text-center"><div className={`inline-block px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10 border border-rose-500/20' : 'text-blue-400 bg-blue-500/10'}`}>${spend.toFixed(2)} ({perc.toFixed(0)}%)</div></td>
+                                                <td className="p-6 font-black uppercase text-[11px] italic tracking-tight leading-relaxed">
+                                                    <div className="flex items-center gap-2">
+                                                        {ad.name}
+                                                        <button onClick={() => copyToClipboard(ad.id)} title="Copiar ID" className="text-zinc-500 hover:text-blue-400 transition-all">
+                                                            <Icon name="Copy" size={12} />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                                {/* INVERSION FORMATO $Gastado / $Presupuesto */}
+                                                <td className="p-6 text-center">
+                                                    <div className={`inline-flex flex-col items-center px-3 py-1.5 rounded-xl font-black ${perc >= s.limit_perc ? 'text-rose-500 bg-rose-500/10 border border-rose-500/20' : 'text-blue-400 bg-blue-500/10'}`}>
+                                                        <span>${spend.toFixed(2)} / ${budget.toFixed(2)}</span>
+                                                        <span className="text-[9px]">({perc.toFixed(0)}%)</span>
+                                                    </div>
+                                                </td>
+                                                {/* LIMITE DE PUJA */}
+                                                <td className="p-6 text-center">
+                                                    <FluidInput 
+                                                        value={ad.bid_amount || 0} 
+                                                        className="bg-black border border-white/10 w-20 p-2 rounded-xl text-center text-emerald-500 font-black outline-none" 
+                                                        onSave={(val) => updateBid(ad.id, val)} 
+                                                    />
+                                                </td>
                                                 <td className="p-6 text-center"><FluidInput value={s.limit_perc} className="bg-black border border-white/10 w-16 p-2 rounded-xl text-center text-blue-500 font-black outline-none" onSave={(val) => updateSetting(ad.id, 'limit_perc', val)} /></td>
                                                 <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
                                                 <td className="p-6"><TurnSelector currentTurnos={s.turno} availableTurns={data.turns} onUpdate={(val) => updateSetting(ad.id, 'turno', val)} /></td>
                                                 <td className="p-6 text-center"><button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen)} className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 shadow-lg' : 'bg-zinc-800 text-zinc-600'}`}><Icon name={s.is_frozen ? "Lock" : "Unlock"} size={14} /></button></td>
+                                                
+                                                {/* ALERTAS */}
+                                                <td className="p-6 text-center relative group">
+                                                    {hasIssues ? (
+                                                        <>
+                                                            <div className="text-amber-500 animate-pulse"><Icon name="AlertTriangle" size={16} /></div>
+                                                            <div className="absolute right-10 top-1/2 -translate-y-1/2 w-48 bg-zinc-800 text-[10px] text-white p-3 rounded-xl shadow-xl hidden group-hover:block z-50">
+                                                                {JSON.stringify(ad.issues_info)}
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <Icon name="CheckCircle" className="text-zinc-700" size={14} />
+                                                    )}
+                                                </td>
                                             </tr>
                                         );
                                     })}
@@ -288,8 +393,36 @@ const Dashboard = ({ userEmail, onLogout }) => {
                         </div>
                     </div>
                 </>
-            ) : (
+            )}
+
+            {view === 'turnos' && (
                 <div className="animate-fade-in text-left space-y-8">
+                    {/* BLACKOUT DATES / FESTIVOS */}
+                    <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-rose-500/10 shadow-xl mb-8">
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="bg-rose-500/10 p-3 rounded-[1.5rem]"><Icon name="CalendarOff" className="text-rose-500" size={24} /></div>
+                            <h2 className="text-xl font-black uppercase text-rose-100 pr-12">Días Festivos (Blackout)</h2>
+                            <p className="text-xs text-zinc-500 font-bold ml-auto max-w-sm text-right">Los AdSets no się encenderán estos días.</p>
+                        </div>
+                        <div className="flex gap-4 items-center">
+                            <input 
+                                type="date" 
+                                className="bg-zinc-800 p-3 rounded-xl outline-none text-white font-bold [color-scheme:dark] border border-white/10" 
+                                value={newHoliday} 
+                                onChange={e => setNewHoliday(e.target.value)} 
+                            />
+                            <button onClick={addHoliday} className="bg-rose-600 px-6 py-3 rounded-xl font-black uppercase hover:bg-rose-500 transition-all text-xs">Añadir</button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-6">
+                            {holidays.map(d => (
+                                <div key={d} className="bg-black border border-white/5 py-1.5 px-3 rounded-xl flex items-center gap-3 text-xs font-bold shadow-inner">
+                                    <span className="text-rose-400">{d}</span>
+                                    <button onClick={() => removeHoliday(d)} className="text-zinc-600 hover:text-rose-500"><Icon name="X" size={12}/></button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
                     {/* CREAR TURNO PERSONALIZADO */}
                     <div className="bg-zinc-900/50 p-6 rounded-[2.5rem] border border-white/5 flex flex-wrap items-center gap-6 shadow-xl">
                         <div className="flex items-center gap-3 bg-black p-3 px-6 rounded-2xl border border-white/10 shadow-inner w-full md:w-auto">
@@ -324,7 +457,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                         {Object.entries(data.turns).map(([name, config]) => {
-                            const isPredefined = ['matutino', 'vespertino', 'nocturno', 'fsemana'].includes(name.toLowerCase());
+                            const isPredefined = ['matutino normal', 'matutino especial', 'vespertino', 'nocturno', 'fsemana'].includes(name.toLowerCase());
                             return (
                                 <div key={name} className="bg-zinc-900/50 p-10 rounded-[3rem] border border-white/5 shadow-2xl relative">
                                     {!isPredefined && (
@@ -372,11 +505,49 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     </div>
                 </div>
             )}
+
+            {view === 'medios' && (
+                <div className="animate-fade-in text-left space-y-8">
+                    <div className="bg-zinc-900 border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl p-8">
+                        <h2 className="text-xl font-black uppercase text-blue-500 mb-8 border-b border-white/10 pb-4">Rotación de Creativos (Anuncios)</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {mediosData.filter(adset => ALLOWED_IDS.includes(adset.id)).map(adset => {
+                                const ads = adset.ads?.data || [];
+                                const adA = ads[0];
+                                const adB = ads[1];
+                                
+                                return (
+                                    <div key={adset.id} className="bg-black border border-white/10 p-6 rounded-3xl">
+                                        <p className="text-xs font-black uppercase text-zinc-500 mb-4 truncate">{adset.name}</p>
+                                        
+                                        {ads.length >= 2 ? (
+                                            <div className="space-y-4">
+                                                {/* Ad A Display */}
+                                                <div className={`p-4 rounded-xl border flex justify-between items-center transition-all ${adA.status === 'ACTIVE' ? 'bg-blue-600/10 border-blue-500/30' : 'bg-zinc-900 border-zinc-800'}`}>
+                                                    <div className="flex items-center gap-2 overflow-hidden"><div className={`w-2 h-2 rounded-full ${adA.status === 'ACTIVE' ? 'bg-emerald-400' : 'bg-rose-600'}`}/> <span className="text-[10px] font-bold truncate pr-2">{adA.name || 'Ad A'}</span></div>
+                                                    <button onClick={() => toggleMedio(adA.id, adB.id)} className={`px-3 py-1 rounded-lg text-[9px] font-black ${adA.status !== 'ACTIVE' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500'}`}>{adA.status === 'ACTIVE' ? 'Activo' : 'Encender'}</button>
+                                                </div>
+                                                {/* Ad B Display */}
+                                                <div className={`p-4 rounded-xl border flex justify-between items-center transition-all ${adB.status === 'ACTIVE' ? 'bg-blue-600/10 border-blue-500/30' : 'bg-zinc-900 border-zinc-800'}`}>
+                                                    <div className="flex items-center gap-2 overflow-hidden"><div className={`w-2 h-2 rounded-full ${adB.status === 'ACTIVE' ? 'bg-emerald-400' : 'bg-rose-600'}`}/> <span className="text-[10px] font-bold truncate pr-2">{adB.name || 'Ad B'}</span></div>
+                                                    <button onClick={() => toggleMedio(adB.id, adA.id)} className={`px-3 py-1 rounded-lg text-[9px] font-black ${adB.status !== 'ACTIVE' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500'}`}>{adB.status === 'ACTIVE' ? 'Activo' : 'Encender'}</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <p className="text-rose-500 text-[10px] font-bold">Requiere al menos 2 Anuncios para rotación.</p>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 
-// --- PANTALLA DE LOGIN (Restaurado) ---
+// --- PANTALLA DE LOGIN ---
 const LoginScreen = ({ onLogin }) => {
     const [auditors, setAuditors] = useState([]);
     const [selected, setSelected] = useState("");
