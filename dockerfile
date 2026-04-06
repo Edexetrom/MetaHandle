@@ -14,11 +14,12 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copiamos el resto del código del backend
 COPY . .
 
-# Puerto donde corre FastAPI (por defecto 8000, pero configurable)
+# Variables de entorno y exposición de puerto
 ENV PORT=8000
 EXPOSE $PORT
 
-# Usamos uvicorn para manejar las peticiones asíncronas
+# Usamos uvicorn atado explícitamente a 0.0.0.0 para que escuche hacia el exterior del contenedor
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers"]

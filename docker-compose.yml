@@ -1,21 +1,28 @@
 services:
-  # BACKEND: manejoapi.libresdeumas.com (Puerto 8000)
+  # BACKEND: manejoapi.libresdeumas.com
   backend:
     build: .
     container_name: meta_backend_api
     ports:
-      - "8000"
+      # [PUERTO VPS] : [PUERTO CONTENEDOR]
+      # Esto garantiza que el VPS siempre escuche en el 8000
+      - "8000:8000"
     env_file:
       - .env
     restart: always
 
-  # FRONTEND: manejometa.libresdeumas.com (Puerto 3000)
+  # FRONTEND: manejometa.libresdeumas.com
   frontend:
     image: nginx:alpine
     container_name: meta_frontend_ui
     ports:
-      - "80" # Frontend accesible en el puerto 3000 del host
+      # [PUERTO VPS] : [PUERTO NGINX]
+      # Usamos el 3000 en el VPS para no chocar con el proxy de Dokploy
+      - "3000:80" 
     volumes:
+      # Montamos los archivos directamente en la carpeta pública de Nginx
       - ./index.html:/usr/share/nginx/html/index.html
       - ./app.jsx:/usr/share/nginx/html/app.jsx
     restart: always
+    depends_on:
+      - backend

@@ -11,3 +11,4 @@ app/utils/__pycache__
 app/models/__pycache__
 venv/
 meta_control.db
+app.zip
