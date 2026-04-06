@@ -214,14 +214,15 @@ const Dashboard = ({ userEmail, onLogout }) => {
         await fetch(`${API_URL}/ads/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, [key]: val, user: userEmail }) });
     };
 
-    const updateBid = async (id, bidVal) => {
+    const updateBid = async (id, bidValDollar) => {
+        const bidValCents = Math.round(parseFloat(bidValDollar) * 100);
         const adIdx = data.meta.findIndex(a => a.id === id);
         if(adIdx > -1) {
             const newMeta = [...data.meta];
-            newMeta[adIdx].bid_amount = bidVal;
+            newMeta[adIdx].bid_amount = bidValCents;
             setData(prev => ({...prev, meta: newMeta}));
         }
-        await fetch(`${API_URL}/ads/bid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, bid_amount: bidVal, user: userEmail }) });
+        await fetch(`${API_URL}/ads/bid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, bid_amount: bidValCents, user: userEmail }) });
     };
 
     const addHoliday = async () => {
@@ -344,12 +345,15 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                         <button onClick={() => toggleMetaStatus(ad.id, ad.status)} className={`px-2 py-1.5 rounded-lg text-[8px] font-black uppercase transition-all ${active ? 'bg-zinc-800 text-zinc-500 hover:text-rose-500' : 'bg-emerald-600 text-white shadow-lg'}`}>{active ? 'Apagar' : 'Prender'}</button>
                                                     </div>
                                                 </td>
-                                                <td className="p-6 font-black uppercase text-[11px] italic tracking-tight leading-relaxed">
-                                                    <div className="flex items-center gap-2">
-                                                        {ad.name}
-                                                        <button onClick={() => copyToClipboard(ad.id)} title="Copiar ID" className="text-zinc-500 hover:text-blue-400 transition-all">
-                                                            <Icon name="Copy" size={12} />
-                                                        </button>
+                                                <td className="p-6 font-black text-[11px] italic tracking-tight leading-relaxed">
+                                                    <div className="flex flex-col gap-1">
+                                                        <span className="uppercase">{ad.name}</span>
+                                                        <div className="flex items-center gap-1.5 text-[9px] text-zinc-500 normal-case font-bold">
+                                                            <span>{ad.id}</span>
+                                                            <button onClick={() => copyToClipboard(ad.id)} title="Copiar ID" className="hover:text-blue-400 transition-all">
+                                                                <Icon name="Copy" size={10} />
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </td>
                                                 {/* INVERSION FORMATO $Gastado / $Presupuesto */}
@@ -362,7 +366,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                 {/* LIMITE DE PUJA */}
                                                 <td className="p-6 text-center">
                                                     <FluidInput 
-                                                        value={ad.bid_amount || 0} 
+                                                        value={ad.bid_amount ? Number(ad.bid_amount / 100).toFixed(2) : "0.00"} 
+                                                        step="0.01"
                                                         className="bg-black border border-white/10 w-20 p-2 rounded-xl text-center text-emerald-500 font-black outline-none" 
                                                         onSave={(val) => updateBid(ad.id, val)} 
                                                     />
