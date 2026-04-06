@@ -21,4 +21,4 @@ ENV PORT=8000
 EXPOSE $PORT
 
 # Usamos uvicorn para manejar las peticiones asíncronas
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers"]
