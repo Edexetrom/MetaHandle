@@ -9,13 +9,12 @@ services:
       - .env
     restart: always
 
-  # FRONTEND: manejometa.libresdeumas.com (Puerto 3000)
+  # FRONTEND: manejometa.libresdeumas.com
   frontend:
-    image: nginx:alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
     container_name: meta_frontend_ui
     ports:
-      - "80" # Frontend accesible en el puerto 3000 del host
-    volumes:
-      - ./index.html:/usr/share/nginx/html/index.html
-      - ./app.jsx:/usr/share/nginx/html/app.jsx
+      - "3000:80" # Frontend accesible en el puerto 3000 del host si no usas reverse proxy
     restart: always
