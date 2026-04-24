@@ -330,7 +330,17 @@ const Dashboard = ({ userEmail, onLogout }) => {
                     {/* Tarjetas de Turnos Regulares */}
                     {Object.entries(data.turns).map(([name, config]) => (
                         <div key={name} className="bg-zinc-900/50 p-10 rounded-[3rem] border border-white/5 shadow-2xl">
-                            <div className="flex items-center gap-3 mb-8"><div className="bg-blue-600/10 p-3 rounded-[1.5rem]"><Icon name="Clock" className="text-blue-500" size={24} /></div><h2 className="text-xl font-black uppercase text-zinc-100">{name}</h2></div>
+                            <div className="flex justify-between items-center mb-8">
+                                <div className="flex items-center gap-3"><div className="bg-blue-600/10 p-3 rounded-[1.5rem]"><Icon name="Clock" className="text-blue-500" size={24} /></div><h2 className="text-xl font-black uppercase text-zinc-100">{name}</h2></div>
+                                {!["matutino", "especial", "vespertino", "nocturno", "fsemana"].includes(name.toLowerCase()) && (
+                                    <button onClick={async () => {
+                                        if (confirm(`¿Eliminar horario ${name}?`)) {
+                                            await fetch(`${API_URL}/turns/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+                                            fetchSync(true);
+                                        }
+                                    }} className="text-rose-500 bg-rose-500/10 hover:bg-rose-500/20 p-2 rounded-xl transition-all"><Icon name="Trash2" size={16} /></button>
+                                )}
+                            </div>
                             <div className="space-y-6">
                                 <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Inicio (24h)</label><FluidInput type="time" value={floatToTime(config.start)} className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none [color-scheme:dark]" onSave={async (val) => { await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: timeToFloat(val), end: config.end, days: config.days }) }); fetchSync(true); }} /></div>
                                 <div><label className="text-[10px] font-black text-zinc-500 uppercase block mb-3">Fin (24h)</label><FluidInput type="time" value={floatToTime(config.end)} className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white font-bold outline-none [color-scheme:dark]" onSave={async (val) => { await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start: config.start, end: timeToFloat(val), days: config.days }) }); fetchSync(true); }} /></div>
@@ -338,6 +348,22 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             </div>
                         </div>
                     ))}
+
+                    {/* Tarjeta Nuevo Turno */}
+                    <div className="bg-zinc-900/50 p-10 rounded-[3rem] border border-white/5 shadow-2xl flex flex-col justify-center items-center cursor-pointer hover:bg-zinc-800 transition-all border-dashed" onClick={async () => {
+                        const name = prompt("Ingrese el nombre del nuevo horario personalizado (ej. madrugada):");
+                        if (name && name.trim()) {
+                            await fetch(`${API_URL}/turns/update`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), start: 0, end: 12, days: "L,M,X,J,V" }) });
+                            fetchSync(true);
+                        }
+                    }}>
+                        <div className="bg-emerald-600/10 p-5 rounded-full mb-4 transition-all">
+                            <Icon name="Plus" className="text-emerald-500" size={32} />
+                        </div>
+                        <h2 className="text-lg font-black uppercase text-emerald-500">Crear Horario</h2>
+                        <p className="text-[10px] text-zinc-500 uppercase mt-2 text-center">Añade un nuevo bloque <br/>de horas personalizado.</p>
+                    </div>
+
                 </div>
             )}
 

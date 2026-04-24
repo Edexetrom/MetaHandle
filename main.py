@@ -30,6 +30,9 @@ def get_meta_ad_account_id():
     return config.get("META_AD_ACCOUNT_ID", os.environ.get("META_AD_ACCOUNT_ID", "")).strip()
 
 # --- 1. CONFIGURACIÓN DB Y MODELOS ---
+DATABASE_URL = "sqlite:///./meta_control.db"
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 class AdSetSetting(Base):
