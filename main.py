@@ -15,14 +15,21 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 
 load_dotenv()
 
+def get_meta_token():
+    """Lee el token dinámicamente del .env para no requerir reinicios del sistema"""
+    config = dotenv_values(".env")
+    return config.get("META_ACCESS_TOKEN", os.environ.get("META_ACCESS_TOKEN", "")).strip()
+
+def get_meta_ad_account_id():
+    """Lee el ID de la cuenta publicitaria dinámicamente"""
+    config = dotenv_values(".env")
+    return config.get("META_AD_ACCOUNT_ID", os.environ.get("META_AD_ACCOUNT_ID", "")).strip()
+
 # --- 1. CONFIGURACIÓN DB Y MODELOS ---
-DATABASE_URL = "sqlite:///./meta_control.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 class AdSetSetting(Base):
@@ -63,8 +70,6 @@ class ActionLog(Base):
 Base.metadata.create_all(bind=engine)
 
 # --- 2. CONSTANTES ---
-META_ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
-META_AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "").strip()
 SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
 API_VERSION = "v21.0"
 
@@ -114,7 +119,7 @@ async def startup_event():
 
     # Definición de Grupos Estrictos (Reglas de Negocio)
     g_vespertino = ["120232204774590717", "120233611687810717"]
-    g_vesp_fsemana = ["120234721717960717"]
+    g_vesp_fsemana = ["120232204774610717", "120232157515490717"]
     g_matutinos = ["120234721717970717", "120234721717950717", "120233618279570717", "120233618279540717", "120232204774570717", "120232204774610717"]
     g_nocturno = ["120238886501840717", "120238886472900717", "120238886420220717", "120238886413960717", "120232157515490717", "120232157515460717"]
 
@@ -166,12 +171,18 @@ async def get_meta_data_cached():
     
     # NUEVOS CAMPOS: bid_amount, issues_info, ads{id,name,status}
     fields = "id,name,status,daily_budget,bid_amount,issues_info,insights.date_preset(today){spend,actions},ads{id,name,status}"
-    url = f"https://graph.facebook.com/{API_VERSION}/{META_AD_ACCOUNT_ID}/adsets"
-    params = {"fields": fields, "access_token": META_ACCESS_TOKEN, "limit": "500"}
+    account_id = get_meta_ad_account_id()
+    url = f"https://graph.facebook.com/{API_VERSION}/{account_id}/adsets"
+    params = {"fields": fields, "access_token": get_meta_token(), "limit": "500"}
     
     try:
         res = await app.state.client.get(url, params=params)
-        data = res.json().get("data", [])
+        json_res = res.json()
+        if "error" in json_res:
+            logging.error(f"Meta API Error in get_meta_data: {json_res['error']}")
+            return meta_cache["data"] or []
+            
+        data = json_res.get("data", [])
         meta_cache["data"] = data
         meta_cache["timestamp"] = curr_time
         return data
@@ -212,49 +223,57 @@ async def automation_engine():
             meta_data = await get_meta_data_cached()
             
             for ad in meta_data:
-                s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
-                if not s or s.is_frozen: continue
-                
-                # Regla: Si es festivo, la automatización asume que NO es tiempo de encender.
-                in_time = False 
+                try:
+                    s = db.query(AdSetSetting).filter(AdSetSetting.id == ad['id']).first()
+                    if not s or s.is_frozen: continue
+                    
+                    # Regla: Si es festivo, la automatización asume que NO es tiempo de encender.
+                    in_time = False 
 
-                if not is_holiday:
-                    assigned = [t.strip().lower() for t in s.turno.split(",")]
-                    for t_name in assigned:
-                        turn = turns.get(t_name)
-                        if not turn: continue
-                        
-                        # Validar hora
-                        time_match = turn.start_hour <= curr_h < turn.end_hour
-                        
-                        # Validar día específico
-                        day_match = False
-                        days_cfg = turn.days.upper().strip()
-                        day_map = {'L': 0, 'M': 1, 'X': 2, 'J': 3, 'V': 4, 'S': 5, 'D': 6}
-                        target_days = [day_map.get(d.strip()) for d in days_cfg.split(',') if d.strip() in day_map]
-                        
-                        if target_days:
-                            day_match = day_of_week in target_days
-                        elif days_cfg == "L-V":
-                            day_match = 0 <= day_of_week <= 4
-                        else:
-                            day_match = True # Fallback por si hay malformación
-                        
-                        if time_match and day_match:
-                            in_time = True
-                            break
+                    if not is_holiday:
+                        assigned = [t.strip().lower() for t in s.turno.split(",") if t.strip()]
+                        for t_name in assigned:
+                            turn = turns.get(t_name)
+                            if not turn: continue
+                            
+                            # Validar hora
+                            time_match = turn.start_hour <= curr_h < turn.end_hour
+                            
+                            # Validar día específico
+                            day_match = False
+                            days_cfg = turn.days.upper().strip()
+                            day_map = {'L': 0, 'M': 1, 'X': 2, 'J': 3, 'V': 4, 'S': 5, 'D': 6}
+                            target_days = [day_map.get(d.strip()) for d in days_cfg.split(',') if d.strip() in day_map]
+                            
+                            if target_days:
+                                day_match = day_of_week in target_days
+                            elif days_cfg == "L-V":
+                                day_match = 0 <= day_of_week <= 4
+                            else:
+                                day_match = True # Fallback por si hay malformación
+                            
+                            if time_match and day_match:
+                                in_time = True
+                                break
 
-                # Control de Presupuesto (Stop-Loss)
-                spend = float(ad.get("insights", {}).get("data", [{}])[0].get("spend", 0)) if ad.get("insights") else 0
-                budget = float(ad.get("daily_budget", 0)) / 100
-                over = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
-                
-                should_be_active = in_time and not over
-                
-                if should_be_active and ad['status'] != 'ACTIVE':
-                    await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "ACTIVE", "access_token": META_ACCESS_TOKEN})
-                elif not should_be_active and ad['status'] == 'ACTIVE':
-                    await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "PAUSED", "access_token": META_ACCESS_TOKEN})
+                    # Control de Presupuesto (Stop-Loss)
+                    insights_data = ad.get("insights", {}).get("data", []) if ad.get("insights") else []
+                    spend = float(insights_data[0].get("spend", 0)) if insights_data and len(insights_data) > 0 else 0.0
+                    
+                    daily_budget_raw = ad.get("daily_budget")
+                    budget = float(daily_budget_raw) / 100 if daily_budget_raw else 0.0
+                    
+                    over = (spend / budget * 100) >= s.limit_perc if budget > 0 else False
+                    
+                    should_be_active = in_time and not over
+                    token = get_meta_token()
+                    
+                    if should_be_active and ad['status'] != 'ACTIVE':
+                        await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "ACTIVE", "access_token": token})
+                    elif not should_be_active and ad['status'] == 'ACTIVE':
+                        await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", params={"status": "PAUSED", "access_token": token})
+                except Exception as ad_err:
+                    logging.error(f"Error procesando AdSet {ad.get('id')}: {ad_err}")
         except Exception as e:
             logging.error(f"Automation Engine Error: {e}")
         finally: db.close()
@@ -289,7 +308,7 @@ async def sync_data():
 
 @app.post("/ads/meta-status")
 async def update_meta_status(req: dict):
-    res = await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{req['id']}", params={"status": req['status'], "access_token": META_ACCESS_TOKEN})
+    res = await app.state.client.post(f"https://graph.facebook.com/{API_VERSION}/{req['id']}", params={"status": req['status'], "access_token": get_meta_token()})
     if res.status_code == 200:
         db = SessionLocal()
         db.add(ActionLog(user=req['user'], msg=f"Manual: {req['status']} en {req['id']}"))
@@ -319,7 +338,7 @@ async def update_bid(req: dict):
         # Enviaremos el valor entero que manda la interfaz.
         res = await app.state.client.post(
             f"https://graph.facebook.com/{API_VERSION}/{req['id']}", 
-            params={"bid_amount": int(req['bid_amount']), "access_token": META_ACCESS_TOKEN}
+            params={"bid_amount": int(req['bid_amount']), "access_token": get_meta_token()}
         )
         if res.status_code == 200:
             db = SessionLocal()
@@ -350,8 +369,9 @@ async def toggle_media(req: dict):
     
     # 1. Traer todos los Ads del AdSet
     url = f"https://graph.facebook.com/{API_VERSION}/{adset_id}/ads"
+    token = get_meta_token()
     try:
-        res = await app.state.client.get(url, params={"fields": "id", "access_token": META_ACCESS_TOKEN})
+        res = await app.state.client.get(url, params={"fields": "id", "access_token": token})
         ads = res.json().get("data", [])
         
         # 2. Apagar los que NO sean el target_ad_id, encender el target
@@ -359,7 +379,7 @@ async def toggle_media(req: dict):
             status = "ACTIVE" if str(ad["id"]) == str(target_ad_id) else "PAUSED"
             await app.state.client.post(
                 f"https://graph.facebook.com/{API_VERSION}/{ad['id']}", 
-                params={"status": status, "access_token": META_ACCESS_TOKEN}
+                params={"status": status, "access_token": token}
             )
         
         db = SessionLocal()
