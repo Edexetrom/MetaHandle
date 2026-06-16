@@ -22,7 +22,8 @@ services:
     volumes:
       # Montamos los archivos directamente en la carpeta pública de Nginx
       - ./index.html:/usr/share/nginx/html/index.html
-      - ./app.jsx:/usr/share/nginx/html/app.jsx
+      # AQUÍ ESTÁ LA CORRECCIÓN: Montar app.js en lugar de app.jsx
+      - ./app.js:/usr/share/nginx/html/app.js
     restart: always
     depends_on:
       - backend
