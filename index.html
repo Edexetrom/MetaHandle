@@ -7,48 +7,61 @@
     <title>Meta Ads Pro Controller</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800;900&family=JetBrains+Mono:wght@400;700&display=swap');
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Outfit', sans-serif;
+            background-color: #09090b;
         }
 
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 4px;
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: transparent;
+        /* Scrollbar Premium */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #333;
-            border-radius: 10px;
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
         }
 
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 99px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(59, 130, 246, 0.4);
+        }
+
+        /* Animación suave */
         .animate-fade-in {
-            animation: fadeIn 0.5s ease-out;
+            animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
         @keyframes fadeIn {
             from {
                 opacity: 0;
+                transform: translateY(4px);
             }
-
             to {
                 opacity: 1;
+                transform: translateY(0);
             }
         }
     </style>
 </head>
 
-<body class="bg-black">
+<body class="text-zinc-100 min-h-screen">
     <div id="root"></div>
-    <script type="text/babel" src="app.jsx?v=2"></script>
+    <script src="app.js?v=10"></script>
 </body>
 
 </html>
