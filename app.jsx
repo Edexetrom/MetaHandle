@@ -15,7 +15,7 @@ const { useState, useEffect, useMemo, useRef, useCallback } = React;
 // --- CONFIGURACIÓN DE ENDPOINT ---
 const API_URL = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
     ? "http://localhost:8000"
-    : (window.location.hostname.includes("libresdeumas.com") ? "http://manejoapi.libresdeumas.com:8000" : window.location.origin);
+    : (window.location.hostname.includes("libresdeumas.com") ? "https://manejoapi.libresdeumas.com" : window.location.origin);
 
 const ALLOWED_IDS = [
     "120238886501840717", "120238886472900717", "120238886429400717", "120238886420220717",
