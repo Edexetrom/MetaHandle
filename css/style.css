@@ -1,0 +1,165 @@
+ /* Variables globales para colores y temas */
+ :root {
+     --bg-body: rgb(119, 90, 90);
+     --text-light: #ffffff;
+     --shadow-color: rgba(255, 206, 206, 0.41);
+     --bg-panel: rgba(0, 0, 0, 0.2);
+ }
+
+ body {
+     background-color: var(--bg-body);
+     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+     margin: 0;
+     padding: 20px;
+     color: var(--text-light);
+ }
+
+ h1.title {
+     text-align: left;
+     margin-left: 5%;
+     font-size: clamp(24px, 4vw, 35px);
+     /* Se adapta al tamaño de la pantalla */
+     font-weight: bold;
+ }
+
+ /* Contenedor principal convertido en semántico <main> */
+ .app {
+     margin: 0 auto;
+     width: 90%;
+     background-color: var(--bg-panel);
+     display: flex;
+     flex-direction: row;
+     /* Por defecto en PC en fila */
+     align-items: center;
+     justify-content: space-around;
+     /* Mejor distribución del espacio */
+     padding: 20px;
+     border-radius: 12px;
+     box-shadow: 0 4px 15px var(--shadow-color);
+     /* Sombra exterior suavizada */
+     gap: 20px;
+ }
+
+ /* Sección de Activación */
+ .Activacion {
+     display: flex;
+     flex-direction: row;
+     justify-content: center;
+     align-items: center;
+     padding: 15px 20px;
+     background-color: rgba(255, 255, 255, 0.05);
+     box-shadow: inset 0px 0px 10px var(--shadow-color);
+     border-radius: 10px;
+ }
+
+ /* Ahora es un label, el cursor pointer ayuda a la UX */
+ .Acti1 {
+     font-size: 18px;
+     font-weight: bold;
+     margin-right: 15px;
+     cursor: pointer;
+ }
+
+ /* --- ESTILOS MODERNOS PARA EL SWITCH (Transformando el checkbox) --- */
+ .toggle-switch {
+     appearance: none;
+     /* Oculta el checkbox tradicional */
+     -webkit-appearance: none;
+     width: 50px;
+     height: 26px;
+     background: #ccc;
+     border-radius: 50px;
+     position: relative;
+     cursor: pointer;
+     outline: none;
+     transition: background 0.3s;
+ }
+
+ /* El círculo blanco dentro del switch */
+ .toggle-switch::after {
+     content: '';
+     position: absolute;
+     top: 3px;
+     left: 3px;
+     width: 20px;
+     height: 20px;
+     background: white;
+     border-radius: 50%;
+     transition: 0.3s;
+ }
+
+ /* Cuando está activado */
+ .toggle-switch:checked {
+     background: #4cd964;
+     /* Color verde estilo iOS */
+ }
+
+ .toggle-switch:checked::after {
+     transform: translateX(24px);
+     /* Mueve el círculo a la derecha */
+ }
+
+ /* --- TABLA --- */
+ .Activos-Gastos {
+     border-collapse: collapse;
+     width: 100%;
+     max-width: 300px;
+     background-color: rgba(0, 0, 0, 0.1);
+     border-radius: 8px;
+     overflow: hidden;
+ }
+
+ .Activos-Gastos th,
+ .Activos-Gastos td {
+     padding: 12px 15px;
+     text-align: center;
+ }
+
+ .Activos-Gastos th {
+     background-color: rgba(255, 255, 255, 0.1);
+     font-size: 14px;
+     letter-spacing: 1px;
+ }
+
+ .Activos-Gastos td {
+     font-size: 20px;
+     font-weight: bold;
+ }
+
+ /* --- USUARIO --- */
+ .info-usuario {
+     text-align: center;
+     padding: 15px;
+     background-color: rgba(255, 255, 255, 0.05);
+     border-radius: 10px;
+     min-width: 150px;
+ }
+
+ .info-usuario p:first-child {
+     margin: 0 0 5px 0;
+     font-size: 14px;
+     opacity: 0.8;
+ }
+
+ #usuario-activo {
+     margin: 0;
+     font-size: 22px;
+     font-weight: bold;
+     color: #ffcece;
+     /* Un toque de color de tu paleta */
+ }
+
+ /* --- DISEÑO RESPONSIVO (MÓVILES) --- */
+ @media (max-width: 768px) {
+     .app {
+         flex-direction: column;
+         /* Apila los elementos en vertical */
+         width: 95%;
+         padding: 15px;
+     }
+
+     h1.title {
+         text-align: center;
+         margin-left: 0;
+     }
+ }

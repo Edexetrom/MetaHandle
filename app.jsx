@@ -126,6 +126,18 @@ const DaySelector = ({ value, onUpdate }) => {
 const floatToTime = (val) => { const v = parseFloat(val) || 0; const h = Math.floor(v); const m = Math.round((v - h) * 60); return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`; };
 const timeToFloat = (val) => { if (!val) return 0; const [h, m] = val.toString().split(':'); return parseInt(h || 0) + (parseInt(m || 0) / 60); };
 
+const getMessagingConversations = (actions) => {
+    if (!actions || !Array.isArray(actions)) return 0;
+    const match = actions.find(a => 
+        a.action_type === 'onsite_conversion.messaging_conversation_started_7d' ||
+        a.action_type === 'onsite_conversion.messaging_first_reply' ||
+        a.action_type === 'messaging_first_replies' ||
+        (a.action_type && (a.action_type.toLowerCase().includes('messaging') || a.action_type.toLowerCase().includes('message')))
+    );
+    return match ? parseInt(match.value || 0, 10) : 0;
+};
+
+
 // --- APLICACIÓN PRINCIPAL ---
 const Dashboard = ({ userEmail, onLogout }) => {
     const [data, setData] = useState({ meta: [], settings: {}, turns: {}, holidays: [], automation_active: false, logs: [] });
@@ -186,7 +198,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
     const stats = useMemo(() => sortedData.reduce((acc, ad) => {
         const i = ad.insights?.data?.[0] || {};
-        acc.s += parseFloat(i.spend || 0); acc.r += parseInt(i.actions?.[0]?.value || 0);
+        acc.s += parseFloat(i.spend || 0); acc.r += getMessagingConversations(i.actions);
         if (ad.status === 'ACTIVE') acc.a++; return acc;
     }, { s: 0, r: 0, a: 0 }), [sortedData]);
 
@@ -287,7 +299,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                                         onSave={(val) => updateBid(ad.id, Math.round(val * 100))}
                                                     />
                                                 </td>
-                                                <td className="p-6 text-center font-black text-white text-base">{i.actions?.[0]?.value || 0}</td>
+                                                <td className="p-6 text-center font-black text-white text-base">{getMessagingConversations(i.actions)}</td>
                                                 <td className="p-6"><TurnSelector currentTurnos={s.turno} availableTurns={data.turns} onUpdate={(val) => updateSetting(ad.id, 'turno', val)} /></td>
                                                 <td className="p-6 text-center"><button onClick={() => updateSetting(ad.id, 'is_frozen', !s.is_frozen)} className={`p-3 rounded-xl transition-all ${s.is_frozen ? 'bg-blue-600 shadow-lg' : 'bg-zinc-800 text-zinc-600'}`}><Icon name={s.is_frozen ? "Lock" : "Unlock"} size={14} /></button></td>
                                             </tr>
@@ -361,7 +373,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                             <Icon name="Plus" className="text-emerald-500" size={32} />
                         </div>
                         <h2 className="text-lg font-black uppercase text-emerald-500">Crear Horario</h2>
-                        <p className="text-[10px] text-zinc-500 uppercase mt-2 text-center">Añade un nuevo bloque <br/>de horas personalizado.</p>
+                        <p className="text-[10px] text-zinc-500 uppercase mt-2 text-center">Añade un nuevo bloque <br />de horas personalizado.</p>
                     </div>
 
                 </div>
