@@ -229,6 +229,13 @@ const timeToFloat = val => {
   return parseInt(h || 0) + parseInt(m || 0) / 60;
 };
 
+// --- EXTRAER CONVERSACIONES DE MENSAJES DE LAS ACCIONES ---
+const getMessagingConversations = actions => {
+  if (!actions || !Array.isArray(actions)) return 0;
+  const match = actions.find(a => a.action_type === 'onsite_conversion.messaging_conversation_started_7d' || a.action_type === 'onsite_conversion.messaging_first_reply' || a.action_type === 'messaging_first_replies' || a.action_type && (a.action_type.toLowerCase().includes('messaging') || a.action_type.toLowerCase().includes('message')));
+  return match ? parseInt(match.value || 0, 10) : 0;
+};
+
 const getMexCityTime = () => {
   try {
     const options = {
