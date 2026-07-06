@@ -229,11 +229,76 @@ const timeToFloat = val => {
   return parseInt(h || 0) + parseInt(m || 0) / 60;
 };
 
-// --- EXTRAER CONVERSACIONES DE MENSAJES DE LAS ACCIONES ---
-const getMessagingConversations = actions => {
-  if (!actions || !Array.isArray(actions)) return 0;
-  const match = actions.find(a => a.action_type === 'onsite_conversion.messaging_conversation_started_7d' || a.action_type === 'onsite_conversion.messaging_first_reply' || a.action_type === 'messaging_first_replies' || a.action_type && (a.action_type.toLowerCase().includes('messaging') || a.action_type.toLowerCase().includes('message')));
-  return match ? parseInt(match.value || 0, 10) : 0;
+const getMexCityTime = () => {
+  try {
+    const options = {
+      timeZone: "America/Mexico_City",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+      hour12: false
+    };
+    const formatter = new Intl.DateTimeFormat("en-US", options);
+    const parts = formatter.formatToParts(new Date());
+    const map = {};
+    parts.forEach(p => map[p.type] = p.value);
+    const year = parseInt(map.year);
+    const month = parseInt(map.month) - 1;
+    const day = parseInt(map.day);
+    const hour = parseInt(map.hour);
+    const minute = parseInt(map.minute);
+    const dt = new Date(year, month, day, hour, minute);
+    const curr_h = hour + minute / 60;
+    const jsDay = dt.getDay(); // 0 is Sunday, 1 is Monday, etc.
+    const pyDay = jsDay === 0 ? 6 : jsDay - 1;
+    return {
+      curr_h,
+      pyDay
+    };
+  } catch (e) {
+    const now = new Date();
+    const curr_h = now.getHours() + now.getMinutes() / 60;
+    const jsDay = now.getDay();
+    const pyDay = jsDay === 0 ? 6 : jsDay - 1;
+    return {
+      curr_h,
+      pyDay
+    };
+  }
+};
+
+const isTurnActive = (turnName, turnsConfig, mexTime) => {
+  if (!turnsConfig) return false;
+  const turn = turnsConfig[turnName.toLowerCase().trim()];
+  if (!turn) return false;
+  const {
+    curr_h,
+    pyDay
+  } = mexTime;
+  const time_match = turn.start <= curr_h && curr_h < turn.end;
+  let day_match = false;
+  const days_cfg = (turn.days || "").toUpperCase().trim();
+  const day_map = {
+    'L': 0,
+    'M': 1,
+    'X': 2,
+    'J': 3,
+    'V': 4,
+    'S': 5,
+    'D': 6
+  };
+  const target_days = days_cfg.split(',').map(d => d.trim()).filter(d => d in day_map).map(d => day_map[d]);
+  if (target_days.length > 0) {
+    day_match = target_days.includes(pyDay);
+  } else if (days_cfg === "L-V") {
+    day_match = pyDay >= 0 && pyDay <= 4;
+  } else {
+    day_match = true;
+  }
+  return time_match && day_match;
 };
 
 // --- APLICACIÓN PRINCIPAL ---
@@ -258,6 +323,8 @@ const Dashboard = ({
   // Filtros de tabla
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL"); // ALL | ACTIVE | PAUSED
+
+  const mexTime = useMemo(() => getMexCityTime(), [data]);
 
   const fetchSync = useCallback(async (silent = false) => {
     if (!silent) setSyncing(true);
@@ -689,11 +756,28 @@ const Dashboard = ({
       className: "text-zinc-500 text-[10px]"
     }, "msg"))), /*#__PURE__*/React.createElement("td", {
       className: "p-4 border-r border-zinc-800"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "flex flex-col gap-1.5"
     }, /*#__PURE__*/React.createElement(TurnSelector, {
       currentTurnos: s.turno,
       availableTurns: data.turns,
       onUpdate: val => updateSetting(ad.id, 'turno', val)
-    })), /*#__PURE__*/React.createElement("td", {
+    }), (() => {
+      const activeList = s.turno ? s.turno.split(',').map(t => t.trim().toLowerCase()).filter(t => t) : [];
+      if (activeList.length === 0) return null;
+      return /*#__PURE__*/React.createElement("div", {
+        className: "flex flex-wrap gap-1 max-w-[150px]"
+      }, activeList.map(t_name => {
+        const isActive = isTurnActive(t_name, data.turns, mexTime);
+        return /*#__PURE__*/React.createElement("span", {
+          key: t_name,
+          className: `text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex items-center gap-1.5 border transition-all duration-200 ${isActive ? 'bg-emerald-950/40 text-emerald-450 border-emerald-800/40 shadow-[0_0_8px_rgba(16,185,129,0.1)]' : 'bg-zinc-950 text-zinc-550 border-zinc-850'}`,
+          title: isActive ? `Turno ${t_name} activo ahora (CDMX)` : `Turno ${t_name} inactivo ahora`
+        }, /*#__PURE__*/React.createElement("span", {
+          className: `w-1 h-1 rounded-full ${isActive ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-700'}`
+        }), t_name);
+      }));
+    })())), /*#__PURE__*/React.createElement("td", {
       className: "p-4 text-center"
     }, /*#__PURE__*/React.createElement("button", {
       onClick: () => updateSetting(ad.id, 'is_frozen', !s.is_frozen),
@@ -791,7 +875,7 @@ const Dashboard = ({
     className: "text-md font-bold uppercase text-zinc-100 tracking-tight"
   }, name), /*#__PURE__*/React.createElement("p", {
     className: "text-[9px] text-zinc-500 uppercase mt-0.5"
-  }, "Bloque de horario"))), !["matutino", "especial", "vespertino", "nocturno", "fsemana"].includes(name.toLowerCase()) && /*#__PURE__*/React.createElement("button", {
+  }, "Bloque de horario"))), !["matutino", "especial", "vespertino", "nocturno", "fsemana", "domingo"].includes(name.toLowerCase()) && /*#__PURE__*/React.createElement("button", {
     onClick: async () => {
       if (confirm(`¿Estás seguro de eliminar el horario "${name}"?`)) {
         await fetch(`${API_URL}/turns/delete`, {

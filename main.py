@@ -120,26 +120,46 @@ async def startup_event():
     if not db.query(AutomationState).first():
         db.add(AutomationState(id=1, is_active=False))
 
-    # Definición de Grupos Estrictos (Reglas de Negocio)
-    g_vespertino = ["120232204774590717", "120233611687810717"]
-    g_vesp_fsemana = ["120232204774610717", "120232157515490717"]
-    g_matutinos = ["120234721717970717", "120234721717950717", "120233618279570717", "120233618279540717", "120232204774570717", "120232204774610717"]
-    g_nocturno = ["120238886501840717", "120238886472900717", "120238886420220717", "120238886413960717", "120232157515490717", "120232157515460717"]
+    # Forzar actualización de asignaciones de turnos requeridas por el usuario
+    new_assignments = {
+        "120232157515490717": "domingo,fsemana,nocturno",
+        "120238886501840717": "domingo,nocturno",
+        "120238886472900717": "domingo,nocturno",
+        "120238886413960717": "domingo,nocturno",
+        "120232157515460717": "domingo,nocturno",
+        "120238886420220717": "domingo,nocturno",
+        
+        "120232204774590717": "vespertino,fsemana",
+        "120232204774610717": "matutino,especial,fsemana",
+        "120233618279540717": "matutino,especial,fsemana",
+        
+        "120233611687810717": "vespertino",
+        "120234721717960717": "vespertino",
+        
+        "120232204774570717": "matutino,especial",
+        "120233618279570717": "matutino,especial",
+        "120234721717950717": "matutino,especial",
+        "120234721717970717": "matutino,especial"
+    }
 
     # Procesar la inicialización de AdSets permitidos
     for ad_id in ALLOWED_IDS:
         if not db.query(AdSetSetting).filter_by(id=ad_id).first():
-            if ad_id in g_vespertino:
-                db.add(AdSetSetting(id=ad_id, turno="vespertino", limit_perc=85.0))
-            elif ad_id in g_vesp_fsemana:
-                db.add(AdSetSetting(id=ad_id, turno="vespertino,fsemana", limit_perc=85.0))
-            elif ad_id in g_matutinos:
-                db.add(AdSetSetting(id=ad_id, turno="matutino", limit_perc=60.0))
-            elif ad_id in g_nocturno:
-                db.add(AdSetSetting(id=ad_id, turno="nocturno", limit_perc=80.0))
-            else:
-                # Regla de Exclusión: Está permitido, pero no tiene grupo
-                db.add(AdSetSetting(id=ad_id, turno="", limit_perc=0.0))
+            assigned_turno = new_assignments.get(ad_id, "")
+            lim = 0.0
+            if "vespertino" in assigned_turno:
+                lim = 85.0
+            elif "nocturno" in assigned_turno:
+                lim = 80.0
+            elif "matutino" in assigned_turno:
+                lim = 60.0
+            db.add(AdSetSetting(id=ad_id, turno=assigned_turno, limit_perc=lim))
+
+    # Sobrescribir forzosamente los turnos de los anuncios indicados
+    for ad_id, new_turn in new_assignments.items():
+        ad_setting = db.query(AdSetSetting).filter_by(id=ad_id).first()
+        if ad_setting:
+            ad_setting.turno = new_turn
 
     # Sobrescritura forzada de turnos por defecto para asegurar cumplimiento horario
     default_turns = {
@@ -147,7 +167,8 @@ async def startup_event():
         "especial": {"start_hour": 5.5, "end_hour": 13.0, "days": "L"},
         "vespertino": {"start_hour": 11.0, "end_hour": 19.0, "days": "L,M,X,J,V"},
         "nocturno": {"start_hour": 15.0, "end_hour": 22.0, "days": "L,M,X,J,V"},
-        "fsemana": {"start_hour": 7.0, "end_hour": 17.0, "days": "S"}
+        "fsemana": {"start_hour": 7.0, "end_hour": 17.0, "days": "S"},
+        "domingo": {"start_hour": 12.0, "end_hour": 19.0, "days": "D"}
     }
     
     for k, v in default_turns.items():
@@ -196,6 +217,7 @@ async def get_meta_data_cached():
 # --- 4. MOTOR DE AUTOMATIZACIÓN AVANZADO ---
 async def automation_engine():
     """Valida reglas, doble reseteo y Días Festivos (Blackout)"""
+    last_reset_key = None # formato: YYYY-MM-DD-HH
     while True:
         await asyncio.sleep(45)
         db = SessionLocal()
@@ -206,10 +228,20 @@ async def automation_engine():
             mex_tz = pytz.timezone('America/Mexico_City')
             now = datetime.now(mex_tz)
             
-            # 1. DOBLE RESETEO (Freeze): 00:00 y 04:00 AM
-            if now.hour in [0, 4] and now.minute < 2:
-                db.query(AdSetSetting).update({"is_frozen": False})
-                db.commit()
+            # 1. DOBLE RESETEO (Freeze y Automatización): 12 de la noche (00:00) y 5 AM (05:00)
+            if now.hour in [0, 5]:
+                reset_key = now.strftime('%Y-%m-%d-%H')
+                if last_reset_key != reset_key:
+                    # Descongelar los que estén congelados
+                    db.query(AdSetSetting).filter(AdSetSetting.is_frozen == True).update({"is_frozen": False})
+                    
+                    # Encender la automatización general si está apagada
+                    if not state.is_active:
+                        state.is_active = True
+                        db.add(ActionLog(user="Sistema", msg="Reinicio Automático: Se encendió la automatización general"))
+                    
+                    db.commit()
+                    last_reset_key = reset_key
 
             # 2. BLACKOUT DATES (Días festivos)
             today_str = now.strftime('%Y-%m-%d')
@@ -431,7 +463,7 @@ async def delete_turn(req: dict):
     db = SessionLocal()
     try:
         t = db.query(TurnConfig).filter(TurnConfig.name == req['name']).first()
-        if t and t.name.lower() not in ["matutino", "especial", "vespertino", "nocturno", "fsemana"]:
+        if t and t.name.lower() not in ["matutino", "especial", "vespertino", "nocturno", "fsemana", "domingo"]:
             db.delete(t)
             db.commit()
             return {"ok": True}

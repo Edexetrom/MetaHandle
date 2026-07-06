@@ -243,6 +243,59 @@ const getMessagingConversations = (actions) => {
     return match ? parseInt(match.value || 0, 10) : 0;
 };
 
+const getMexCityTime = () => {
+    try {
+        const options = { timeZone: "America/Mexico_City", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric", hour12: false };
+        const formatter = new Intl.DateTimeFormat("en-US", options);
+        const parts = formatter.formatToParts(new Date());
+        const map = {};
+        parts.forEach(p => map[p.type] = p.value);
+        
+        const year = parseInt(map.year);
+        const month = parseInt(map.month) - 1;
+        const day = parseInt(map.day);
+        const hour = parseInt(map.hour);
+        const minute = parseInt(map.minute);
+        
+        const dt = new Date(year, month, day, hour, minute);
+        const curr_h = hour + (minute / 60);
+        const jsDay = dt.getDay(); // 0 is Sunday, 1 is Monday, etc.
+        const pyDay = jsDay === 0 ? 6 : jsDay - 1;
+        
+        return { curr_h, pyDay };
+    } catch (e) {
+        const now = new Date();
+        const curr_h = now.getHours() + (now.getMinutes() / 60);
+        const jsDay = now.getDay();
+        const pyDay = jsDay === 0 ? 6 : jsDay - 1;
+        return { curr_h, pyDay };
+    }
+};
+
+const isTurnActive = (turnName, turnsConfig, mexTime) => {
+    if (!turnsConfig) return false;
+    const turn = turnsConfig[turnName.toLowerCase().trim()];
+    if (!turn) return false;
+    
+    const { curr_h, pyDay } = mexTime;
+    const time_match = turn.start <= curr_h && curr_h < turn.end;
+    
+    let day_match = false;
+    const days_cfg = (turn.days || "").toUpperCase().trim();
+    const day_map = {'L': 0, 'M': 1, 'X': 2, 'J': 3, 'V': 4, 'S': 5, 'D': 6};
+    
+    const target_days = days_cfg.split(',').map(d => d.trim()).filter(d => d in day_map).map(d => day_map[d]);
+    if (target_days.length > 0) {
+        day_match = target_days.includes(pyDay);
+    } else if (days_cfg === "L-V") {
+        day_match = pyDay >= 0 && pyDay <= 4;
+    } else {
+        day_match = true;
+    }
+    
+    return time_match && day_match;
+};
+
 // --- APLICACIÓN PRINCIPAL ---
 const Dashboard = ({ userEmail, onLogout }) => {
     const [data, setData] = useState({ meta: [], settings: {}, turns: {}, holidays: [], automation_active: false, logs: [] });
@@ -255,6 +308,8 @@ const Dashboard = ({ userEmail, onLogout }) => {
     // Filtros de tabla
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("ALL"); // ALL | ACTIVE | PAUSED
+
+    const mexTime = useMemo(() => getMexCityTime(), [data]);
 
     const fetchSync = useCallback(async (silent = false) => {
         if (!silent) setSyncing(true);
@@ -715,11 +770,38 @@ const Dashboard = ({ userEmail, onLogout }) => {
 
                                                     {/* Turnos */}
                                                     <td className="p-4 border-r border-zinc-800">
-                                                        <TurnSelector 
-                                                            currentTurnos={s.turno} 
-                                                            availableTurns={data.turns} 
-                                                            onUpdate={(val) => updateSetting(ad.id, 'turno', val)} 
-                                                        />
+                                                        <div className="flex flex-col gap-1.5">
+                                                            <TurnSelector 
+                                                                currentTurnos={s.turno} 
+                                                                availableTurns={data.turns} 
+                                                                onUpdate={(val) => updateSetting(ad.id, 'turno', val)} 
+                                                            />
+                                                            {(() => {
+                                                                const activeList = s.turno ? s.turno.split(',').map(t => t.trim().toLowerCase()).filter(t => t) : [];
+                                                                if (activeList.length === 0) return null;
+                                                                return (
+                                                                    <div className="flex flex-wrap gap-1 max-w-[150px]">
+                                                                        {activeList.map(t_name => {
+                                                                            const isActive = isTurnActive(t_name, data.turns, mexTime);
+                                                                            return (
+                                                                                <span 
+                                                                                    key={t_name} 
+                                                                                    className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex items-center gap-1.5 border transition-all duration-200 ${
+                                                                                        isActive 
+                                                                                            ? 'bg-emerald-950/40 text-emerald-450 border-emerald-800/40 shadow-[0_0_8px_rgba(16,185,129,0.1)]' 
+                                                                                            : 'bg-zinc-950 text-zinc-550 border-zinc-850'
+                                                                                    }`}
+                                                                                    title={isActive ? `Turno ${t_name} activo ahora (CDMX)` : `Turno ${t_name} inactivo ahora`}
+                                                                                >
+                                                                                    <span className={`w-1 h-1 rounded-full ${isActive ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-700'}`} />
+                                                                                    {t_name}
+                                                                                </span>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </div>
                                                     </td>
 
                                                     {/* Bloqueo (Freeze) */}
@@ -832,7 +914,7 @@ const Dashboard = ({ userEmail, onLogout }) => {
                                             <p className="text-[9px] text-zinc-500 uppercase mt-0.5">Bloque de horario</p>
                                         </div>
                                     </div>
-                                    {!["matutino", "especial", "vespertino", "nocturno", "fsemana"].includes(name.toLowerCase()) && (
+                                    {!["matutino", "especial", "vespertino", "nocturno", "fsemana", "domingo"].includes(name.toLowerCase()) && (
                                         <button 
                                             onClick={async () => {
                                                 if (confirm(`¿Estás seguro de eliminar el horario "${name}"?`)) {
