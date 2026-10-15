@@ -74,10 +74,11 @@ Base.metadata.create_all(bind=engine)
 
 # --- 2. CONSTANTES ---
 SHEET_ID = "1PGyE1TN5q1tEtoH5A-wxqS27DkONkNzp-hreL3OMJZw"
-API_VERSION = "v21.0"
+API_VERSION = "v23.0"
 
 # Listado estricto permitido por negocio
 ALLOWED_IDS = [
+    "120252848817690717", "120252865060270717", "120252849956290717",
     "120238886501840717", "120238886472900717", "120238886429400717",
     "120238886420220717", "120238886413960717", "120238886369210717",
     "120234721717970717", "120234721717960717", "120234721717950717",
@@ -122,9 +123,19 @@ async def startup_event():
 
     # Forzar actualización de asignaciones de turnos requeridas por el usuario
     new_assignments = {
+        # Nuevos turnos activos asignados
+        "120252848817690717": "vespertino",              # 11 A 6PM
+        "120252865060270717": "matutino,especial",       # 6AM A 1PM
+        "120252849956290717": "nocturno",                # 3PM A 9PM
+
+        # Mantener pausados (visibles en dashboard pero sin turno para que queden pausados)
+        "120238886472900717": "",
+        "120238886429400717": "",
+        "120234721717960717": "",
+
+        # Asignaciones existentes vigentes
         "120232157515490717": "domingo,fsemana,nocturno",
         "120238886501840717": "domingo,nocturno",
-        "120238886472900717": "domingo,nocturno",
         "120238886413960717": "domingo,nocturno",
         "120232157515460717": "domingo,nocturno",
         "120238886420220717": "domingo,nocturno",
@@ -134,7 +145,6 @@ async def startup_event():
         "120233618279540717": "matutino,especial,fsemana",
         
         "120233611687810717": "vespertino",
-        "120234721717960717": "vespertino",
         
         "120232204774570717": "matutino,especial",
         "120233618279570717": "matutino,especial",
@@ -160,13 +170,21 @@ async def startup_event():
         ad_setting = db.query(AdSetSetting).filter_by(id=ad_id).first()
         if ad_setting:
             ad_setting.turno = new_turn
+            if not new_turn:
+                ad_setting.limit_perc = 0.0
+            elif "vespertino" in new_turn and ad_setting.limit_perc == 0.0:
+                ad_setting.limit_perc = 85.0
+            elif "nocturno" in new_turn and ad_setting.limit_perc == 0.0:
+                ad_setting.limit_perc = 80.0
+            elif "matutino" in new_turn and ad_setting.limit_perc == 0.0:
+                ad_setting.limit_perc = 60.0
 
     # Sobrescritura forzada de turnos por defecto para asegurar cumplimiento horario
     default_turns = {
-        "matutino": {"start_hour": 6.5, "end_hour": 13.0, "days": "M,X,J,V"},
+        "matutino": {"start_hour": 6.0, "end_hour": 13.0, "days": "M,X,J,V"},
         "especial": {"start_hour": 5.5, "end_hour": 13.0, "days": "L"},
-        "vespertino": {"start_hour": 11.0, "end_hour": 19.0, "days": "L,M,X,J,V"},
-        "nocturno": {"start_hour": 15.0, "end_hour": 22.0, "days": "L,M,X,J,V"},
+        "vespertino": {"start_hour": 11.0, "end_hour": 18.0, "days": "L,M,X,J,V"},
+        "nocturno": {"start_hour": 15.0, "end_hour": 21.0, "days": "L,M,X,J,V"},
         "fsemana": {"start_hour": 7.0, "end_hour": 17.0, "days": "S"},
         "domingo": {"start_hour": 12.0, "end_hour": 19.0, "days": "D"}
     }
